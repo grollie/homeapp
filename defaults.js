@@ -18,8 +18,10 @@ window.HH_DEFAULT_DEVICES = [
   { icon: '📹', name: 'FortiRecorder 2', sub: 'Local NVR', url: 'https://192.168.1.3', group: 'Cameras' },
   { icon: '☁️', name: 'FortiCamera Cloud', sub: 'FortiCloud', url: 'https://forticamera.forticloud.com', group: 'Cameras', embed: false },
   { icon: '💧', name: 'Rachio', sub: 'Sprinklers', url: 'https://app.rach.io', group: 'Yard', embed: false },
-  { icon: '🐈', name: 'Whisker', sub: 'Litter-Robot', url: 'https://www.whisker.com', group: 'Robots', app: true,
+  { icon: '🐈', name: 'Litter-Robot', sub: 'Whisker', url: 'https://www.whisker.com', group: 'Robots', app: true,
     note: 'Litter-Robot is app-only. Open the Whisker app on your phone.' },
+  { icon: '🍽️', name: 'Feeder-Robot', sub: 'Whisker', url: 'https://www.whisker.com', group: 'Robots', app: true,
+    note: 'Feeder-Robot is app-only. Open the Whisker app on your phone.' },
   { icon: '🤖', name: 'Matic', sub: 'Robot vacuum', url: 'https://maticrobots.com', group: 'Robots', app: true,
     note: 'Matic is app-only. Open the Matic app on your phone.' },
 ];
