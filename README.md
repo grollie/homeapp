@@ -26,11 +26,11 @@ just random bytes. Use real passwords (8+ characters, not reused).
    (the local ones — Solar Assistant, FortiRecorder, Starlink dish — need your real IPs).
    Optionally add a device's own username/password so the family can see it after signing in.
 3. Click **Build & download vault.js**.
-4. Put `vault.js` in this repo next to `index.html` and commit/push
+4. Either paste a GitHub token and click **Build & publish**, or put the downloaded `vault.js` in this repo next to `index.html` and commit/push
    (on github.com: **Add file → Upload files**).
 
-To change passwords or devices later, open setup.html, use **Edit an existing vault** with
-your `vault.js` and your own login, make changes, download and commit again.
+To change passwords or devices later, sign in and click **Accounts** — the current vault loads automatically. (Or open setup.html, use **Edit an existing vault** with
+your `vault.js` and your own login.) Make changes, then build & publish or download and commit again.
 
 ## Which devices open inside the page
 

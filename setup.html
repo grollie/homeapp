@@ -33,9 +33,14 @@ small{color:var(--muted)}
 <h1>Home Hub Setup</h1>
 <p class="muted">Builds the encrypted <code>vault.js</code> that Home Hub reads. Everything you enter here is encrypted in your browser before download — nothing is sent anywhere. Download the file, put it next to <code>index.html</code> in the <code>homeapp</code> repo, and commit.</p>
 
-<div class="box">
+<div class="box" id="autoBox" style="display:none">
+  <h2 style="margin-top:0">Editing the live vault</h2>
+  <p class="muted" id="autoMsg"></p>
+</div>
+
+<div class="box" id="fileBox">
   <h2 style="margin-top:0">Edit an existing vault</h2>
-  <p class="muted">Optional. Skip this to start fresh from the defaults.</p>
+  <p class="muted">Optional. Skip this to start fresh from the defaults. (Sign in on the main page first and this is done for you.)</p>
   <div class="row"><input type="file" id="vfile" accept=".js,.json"><input id="vpw" type="password" placeholder="Your Home Hub password" autocomplete="off"></div>
   <div class="row"><input id="vname" placeholder="Your Home Hub name" autocomplete="off"><button id="vload">Unlock and load</button></div>
   <div id="vmsg"></div>
@@ -54,16 +59,41 @@ small{color:var(--muted)}
 <div class="box" style="margin-top:28px">
   <button class="primary" id="build">Build &amp; download vault.js</button>
   <span id="bmsg" style="margin-left:12px"></span>
+  <h2>Publish straight to GitHub (optional)</h2>
+  <p class="muted">Skips the manual upload. Needs a GitHub token with <em>Contents: read &amp; write</em> on the <code>homeapp</code> repo. The token is used once and never saved.</p>
+  <div class="row"><input id="ghtoken" type="password" placeholder="GitHub token" autocomplete="off"><button id="publish">Build &amp; publish</button></div>
+  <div id="pmsg"></div>
 </div>
 </main>
 
 <script src="crypto.js"></script>
 <script src="defaults.js"></script>
+<script src="vault.js"></script>
 <script>
 const $ = (s) => document.querySelector(s);
+const REPO = 'grollie/homeapp';
 let devices = structuredClone(window.HH_DEFAULT_DEVICES);
 let users = [{ name: '', pw: '' }];        // {name, pw, existing?:wrappedEntry}
 let loaded = null;                         // existing vault + rawKey when editing
+
+function applyVault(vault, rawKey, data) {
+  devices = data.devices;
+  users = Object.entries(vault.users).map(([id, entry]) => ({ name: entry.name || '', pw: '', existing: entry, id }));
+  loaded = { vault, rawKey };
+}
+
+// Signed in on index.html in this tab? Load the live vault automatically.
+(async () => {
+  try {
+    const s = JSON.parse(sessionStorage.getItem('hh'));
+    if (!s || !window.HH_VAULT) return;
+    const rawKey = HH.unb64(s.key);
+    applyVault(window.HH_VAULT, rawKey, await HH.readData(window.HH_VAULT, rawKey));
+    renderUsers(); renderDevices();
+    $('#autoBox').style.display = ''; $('#fileBox').style.display = 'none';
+    $('#autoMsg').textContent = `Loaded the current vault as ${s.name}. Add people or devices below, then build (and publish).`;
+  } catch {}
+})();
 
 function renderUsers() {
   const box = $('#users'); box.innerHTML = '';
@@ -107,31 +137,54 @@ $('#vload').onclick = async () => {
     const txt = await f.text();
     const vault = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1));
     const rawKey = await HH.unlockKey(vault, $('#vname').value, $('#vpw').value);
-    const data = await HH.readData(vault, rawKey);
-    devices = data.devices;
-    users = Object.entries(vault.users).map(([id, entry]) => ({ name: entry.name || '', pw: '', existing: entry, id }));
-    loaded = { vault, rawKey };
+    applyVault(vault, rawKey, await HH.readData(vault, rawKey));
     renderUsers(); renderDevices();
     msg.innerHTML = '<span class="ok">Loaded. Edit below and build a new vault.js.</span>';
   } catch { msg.innerHTML = '<span class="err">Could not unlock that file with those details.</span>'; }
   $('#vpw').value = '';
 };
 
-$('#build').onclick = async () => {
-  const msg = $('#bmsg'); msg.textContent = '';
+// Returns the vault.js file text, or throws a message to show the user.
+async function buildVault() {
   const live = users.filter((u) => u.name.trim());
-  if (!live.length) return (msg.innerHTML = '<span class="err">Add at least one person.</span>');
-  for (const u of live) if (!u.pw && !u.existing) return (msg.innerHTML = `<span class="err">${u.name} needs a password.</span>`);
-  for (const u of live) if (u.pw && u.pw.length < 8) return (msg.innerHTML = `<span class="err">${u.name}'s password should be at least 8 characters.</span>`);
+  if (!live.length) throw 'Add at least one person.';
+  for (const u of live) if (!u.pw && !u.existing) throw `${u.name} needs a password.`;
+  for (const u of live) if (u.pw && u.pw.length < 8) throw `${u.name}'s password should be at least 8 characters.`;
   const rawKey = loaded ? loaded.rawKey : HH.rand(32);
   const out = { v: 1, users: {}, data: await HH.writeData(rawKey, { devices: devices.filter((d) => d.name.trim()) }) };
   for (const u of live) {
     const id = await HH.userId(u.name);
     out.users[id] = u.pw ? { name: u.name.trim(), ...(await HH.wrapFor(rawKey, u.pw)) } : u.existing;
   }
-  const blob = new Blob(['window.HH_VAULT = ' + JSON.stringify(out, null, 1) + ';\n'], { type: 'text/javascript' });
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'vault.js'; a.click();
-  msg.innerHTML = '<span class="ok">Downloaded vault.js — commit it to the homeapp repo.</span>';
+  return 'window.HH_VAULT = ' + JSON.stringify(out, null, 1) + ';\n';
+}
+
+$('#build').onclick = async () => {
+  const msg = $('#bmsg'); msg.textContent = '';
+  try {
+    const blob = new Blob([await buildVault()], { type: 'text/javascript' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'vault.js'; a.click();
+    msg.innerHTML = '<span class="ok">Downloaded vault.js — commit it to the homeapp repo.</span>';
+  } catch (e) { msg.innerHTML = `<span class="err">${e}</span>`; }
+};
+
+$('#publish').onclick = async () => {
+  const msg = $('#pmsg'); msg.textContent = '';
+  const token = $('#ghtoken').value.trim();
+  if (!token) return (msg.innerHTML = '<span class="err">Paste a GitHub token first.</span>');
+  try {
+    const text = await buildVault();
+    const api = `https://api.github.com/repos/${REPO}/contents/vault.js`;
+    const headers = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' };
+    const cur = await fetch(api, { headers });
+    const sha = cur.ok ? (await cur.json()).sha : undefined;
+    const bytes = new TextEncoder().encode(text);
+    const content = btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(''));
+    const r = await fetch(api, { method: 'PUT', headers, body: JSON.stringify({ message: 'Update vault.js from setup page', content, sha }) });
+    if (!r.ok) throw `GitHub said ${r.status}: ${(await r.json()).message || ''}`;
+    msg.innerHTML = '<span class="ok">Published. The site updates in a minute or two.</span>';
+  } catch (e) { msg.innerHTML = `<span class="err">${e}</span>`; }
+  $('#ghtoken').value = '';
 };
 </script>
 </body>
