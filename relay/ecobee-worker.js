@@ -8,7 +8,8 @@
 //   GET /thermostats?k=<RELAY_KEY>  ->  { at, source:'ecobee', thermostats:[{ id, name, temp, humidity,
 //        heatSet, coolSet, mode, fan, running:[...], hold, sensors:[{ id, name, temp, occupied, open }] }] }
 //
-// Secrets: ECOBEE_USER, ECOBEE_PASSWORD, RELAY_KEY.  KV binding STATE caches the access token.
+// Secrets: ECOBEE_USER, ECOBEE_PASSWORD, ECOBEE_TOTP (authenticator setup key, if 2-step is on), RELAY_KEY.
+// KV binding STATE caches the access token.
 
 const ALLOWED_ORIGINS = ['https://grollie.github.io', 'http://localhost:8787'];
 const AUTH = 'https://auth.ecobee.com/oauth/token';
@@ -50,10 +51,37 @@ async function token(env, force = false) {
     body: JSON.stringify({ grant_type: 'password', client_id: CLIENT_ID, audience: AUDIENCE, scope: 'openid smartRead smartWrite piiRead',
       username: env.ECOBEE_USER, password: env.ECOBEE_PASSWORD }),
   });
-  const j = await r.json();
-  if (!r.ok || !j.access_token) throw new Error(`ecobee login: ${j.error_description || j.error || r.status}`);
+  let j = await r.json();
+  // Account has 2-step verification: answer Auth0's MFA challenge with a TOTP code from ECOBEE_TOTP (the
+  // authenticator "setup key"), exactly as the phone app would.
+  if (j.error === 'mfa_required' && j.mfa_token) {
+    if (!env.ECOBEE_TOTP) throw new Error('ecobee login: 2-step verification is on but ECOBEE_TOTP is not set');
+    const r2 = await fetch(AUTH, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
+      body: JSON.stringify({ grant_type: 'http://auth0.com/oauth/grant-type/mfa-otp', client_id: CLIENT_ID, mfa_token: j.mfa_token, otp: await totp(env.ECOBEE_TOTP) }),
+    });
+    j = await r2.json();
+    if (!r2.ok || !j.access_token) throw new Error(`ecobee MFA: ${j.error_description || j.error || r2.status}`);
+  } else if (!r.ok || !j.access_token) throw new Error(`ecobee login: ${j.error_description || j.error || r.status}`);
   await env.STATE.put('ecobee:token', JSON.stringify({ access_token: j.access_token, exp: Date.now() + ((j.expires_in || 3600) - 120) * 1000 }));
   return j.access_token;
+}
+
+// RFC 6238 TOTP (SHA-1, 6 digits, 30 s) from a base32 setup key, via WebCrypto.
+async function totp(secretB32, step = 30, digits = 6) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const clean = secretB32.toUpperCase().replace(/[^A-Z2-7]/g, '');
+  let bits = '', bytes = [];
+  for (const c of clean) bits += alphabet.indexOf(c).toString(2).padStart(5, '0');
+  for (let i = 0; i + 8 <= bits.length; i += 8) bytes.push(parseInt(bits.slice(i, i + 8), 2));
+  const key = await crypto.subtle.importKey('raw', new Uint8Array(bytes), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+  const counter = new ArrayBuffer(8), view = new DataView(counter);
+  view.setBigUint64(0, BigInt(Math.floor(Date.now() / 1000 / step)));
+  const h = new Uint8Array(await crypto.subtle.sign('HMAC', key, counter));
+  const off = h[h.length - 1] & 0xf;
+  const code = ((h[off] & 0x7f) << 24 | h[off + 1] << 16 | h[off + 2] << 8 | h[off + 3]) % 10 ** digits;
+  return String(code).padStart(digits, '0');
 }
 
 async function api(env, path, json, retry = true) {
