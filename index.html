@@ -200,7 +200,10 @@ async function rachioPanel(key, root) {
   try {
     const me = await api('person/info'), person = await api('person/' + me.id);
     root.innerHTML = '';
-    for (const dev of person.devices) {
+    // Hide retired controllers: offline and nothing watered in the last year.
+    const year = 365 * 864e5;
+    const active = person.devices.filter((d) => d.status === 'ONLINE' || d.zones.some((z) => z.lastWateredDate > Date.now() - year));
+    for (const dev of active) {
       const c = document.createElement('div'); c.className = 'ctl';
       const online = dev.status === 'ONLINE';
       const rain = dev.rainDelayExpirationDate > Date.now() ? ` · rain delay until ${new Date(dev.rainDelayExpirationDate).toLocaleString()}` : '';
