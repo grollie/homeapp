@@ -36,9 +36,10 @@ your `vault.js` and your own login.) Make changes, then build & publish or downl
 
 | Device | Inside the page? | Why |
 |---|---|---|
+| Solar Assistant (both sites, merged) | Yes — live power, load, battery, grid every 10 s | Via the Cloudflare Worker in `relay/worker.js` (Solar Assistant needs headers a browser cannot send) |
 | Rachio | Yes — live zones, run/stop, rain delay | Uses the Rachio API with the key stored in the vault |
 | FortiRecorder ×2 | Yes (on home Wi-Fi / VPN) | Local web pages |
-| Solar Assistant ×2, Ecobee, Nest, Starlink, FortiCamera Cloud, Smart Life | New tab | Those sites block being embedded |
+| Ecobee, Nest, Starlink, FortiCamera Cloud, Smart Life | New tab | Those sites block being embedded |
 | myQ, First Alert, Whisker (Litter-Robot, Feeder-Robot), Matic | App only | No web portal exists; tile links to the vendor site |
 
 Local devices only load when you're on the home network or connected to the home VPN.
@@ -61,3 +62,11 @@ For a device whose password changes on a schedule (FortiCamera Cloud: every 42 d
 "Password expires in N days" and turns red when it's due. Click **Update password** on the tile, type the
 new one, and either **Save & publish** (with a GitHub token) or **Save & download** then commit `vault.js`.
 Set the schedule in setup.html ("Password expires every N days").
+
+## Solar relay (Cloudflare Worker)
+
+`relay/worker.js` runs as the `solar-relay` worker on the Cloudflare account. It holds the Solar
+Assistant cloud token (secret `SA_TOKEN`) and a shared `RELAY_KEY`; the page calls
+`https://solar-relay.garyrollie.workers.dev/metrics?k=<RELAY_KEY>` and gets every site's metrics.
+To redeploy after editing worker.js: Cloudflare dashboard → Workers & Pages → solar-relay → Edit code,
+or `PUT /accounts/<id>/workers/scripts/solar-relay` with the Cloudflare API.
