@@ -78,6 +78,26 @@ h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--
 .mppt{font-size:13px;color:var(--muted);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:4px 10px}
 .mppt b{color:var(--text)}
 .mppt.dead{border-color:var(--danger);color:var(--danger)}.mppt.dead b{color:var(--danger)}
+/* thermostat cards, after the ecobee portal: big current temp, setpoints, mode colour, sensor list */
+.tstat{--m:#8a929c}.tstat.heat{--m:#e8702a}.tstat.cool{--m:#2f8be6}.tstat.auto{--m:#2e8b57}
+.tstat{border-left:5px solid var(--m)}
+.thead{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.mode{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#fff;background:var(--m);padding:3px 10px;border-radius:999px}
+.tbody{display:grid;grid-template-columns:auto auto 1fr;gap:18px;align-items:center;margin-top:10px}
+.cur{font-size:56px;font-weight:300;line-height:1;letter-spacing:-2px}
+.sps{font-size:28px;font-weight:500;line-height:1.2;white-space:nowrap}
+.sp.heat{color:#e8702a}.sp.cool{color:#2f8be6}.sp.off{color:var(--muted)}.sep{color:var(--muted);margin:0 4px}
+.curl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:4px}
+.tmeta{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:3px}
+.hold{color:var(--accent);font-weight:600}.hold.muted{color:var(--muted);font-weight:400}
+.sensors{margin-top:12px;border-top:1px solid var(--line)}
+.sensor{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);font-size:14px}
+.sensor.unused{opacity:.5}
+.st2{display:flex;align-items:center;gap:10px}.stemp{min-width:36px;text-align:right;font-weight:600}
+.occ{width:9px;height:9px;border-radius:50%;background:var(--line);display:inline-block}.occ.on{background:#2e8b57;box-shadow:0 0 0 3px rgba(46,139,87,.25)}
+.door{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;color:#fff;background:#2e8b57}.door.open{background:var(--danger)}
+.src{font-size:12px;color:var(--muted);text-align:right;padding:4px 2px}
+@media (max-width:520px){.tbody{grid-template-columns:auto 1fr}.tmeta{grid-column:1/-1}.cur{font-size:44px}}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:6px}
 .st{background:var(--bg);border-radius:10px;padding:10px 12px}
 .st .sv{font-size:20px;font-weight:600;line-height:1.2}.st .sl{font-size:12px;color:var(--muted)}
@@ -228,9 +248,9 @@ function openDevice(d) {
     note.textContent = d.note || `${d.name} doesn't allow being shown inside another page. Use "Open in new tab".`;
   } else note.classList.add('hidden');
   const f = $('#frame'), live = $('#vlive'); live.innerHTML = '';
-  if (d.rachioKey || d.solarKey) {
+  if (d.rachioKey || d.solarKey || d.climateRelay) {
     live.classList.remove('hidden'); f.classList.add('hidden'); f.src = 'about:blank'; note.classList.add('hidden');
-    if (d.rachioKey) rachioPanel(d.rachioKey, live); else solarPanel(d, live);
+    if (d.rachioKey) rachioPanel(d.rachioKey, live); else if (d.climateRelay) climatePanel(d, live); else solarPanel(d, live);
   }
   else if (d.url && !d.app && d.embed !== false) { live.classList.add('hidden'); f.classList.remove('hidden'); f.src = d.url; }
   else { live.classList.add('hidden'); f.classList.add('hidden'); f.src = 'about:blank'; }
@@ -347,6 +367,44 @@ async function solarPanel(d, root) {
   };
   try { await refresh(); } catch (e) { root.innerHTML = `<div class="ctl">Couldn't reach Solar Assistant (${e.message}).</div>`; return; }
   solarTimer = setInterval(() => { if ($('#viewer').classList.contains('hidden')) return clearInterval(solarTimer); refresh().catch(() => {}); }, 10000);
+}
+
+// ---- Thermostats (ecobee now; Home Assistant later) — the relay returns the same "climate shape" either way ----
+let climateTimer = null;
+async function climatePanel(d, root) {
+  clearInterval(climateTimer);
+  const deg = (x) => (x == null ? '—' : `${Math.round(x)}°`);
+  const modeCls = { heat: 'heat', cool: 'cool', auto: 'auto', off: 'off' };
+  root.innerHTML = '<div class="ctl">Connecting to the thermostats…</div>';
+  const refresh = async () => {
+    const r = await fetch(`${d.climateRelay.replace(/\/$/, '')}/thermostats?k=${encodeURIComponent(d.solarKey || d.climateKey)}`);
+    if (!r.ok) throw new Error('relay ' + r.status);
+    const { thermostats, source } = await r.json();
+    root.innerHTML = thermostats.map((t) => {
+      const mode = (t.mode || 'off').toLowerCase(), cls = modeCls[mode] || 'off';
+      const set = mode === 'auto' ? `<span class="sp heat">${deg(t.heatSet)}</span><span class="sep">–</span><span class="sp cool">${deg(t.coolSet)}</span>`
+        : mode === 'heat' ? `<span class="sp heat">${deg(t.heatSet)}</span>` : mode === 'cool' ? `<span class="sp cool">${deg(t.coolSet)}</span>` : '<span class="sp off">Off</span>';
+      const running = t.running.length ? t.running.map((x) => x.replace(/([a-z])([A-Z0-9])/g, '$1 $2').toLowerCase()).join(', ') : 'idle';
+      const hold = t.hold ? `<div class="hold">Hold${t.hold.name && t.hold.name !== 'auto' ? ` · ${t.hold.name}` : ''}${t.hold.until ? ` until ${t.hold.until.replace(/:\d\d$/, '')}` : ''}</div>` : (t.climate ? `<div class="hold muted">Schedule · ${t.climate}</div>` : '');
+      const sensors = t.sensors.map((s) => `<div class="sensor${s.inUse === false ? ' unused' : ''}"><span class="sn">${s.name}</span><span class="st2">${s.open != null ? `<b class="door ${s.open ? 'open' : 'closed'}">${s.open ? 'Open' : 'Closed'}</b>` : ''}${s.occupied != null ? `<i class="occ${s.occupied ? ' on' : ''}" title="${s.occupied ? 'Occupied' : 'No motion'}"></i>` : ''}<span class="stemp">${s.temp != null ? deg(s.temp) : ''}</span></span></div>`).join('');
+      return `<div class="ctl tstat ${cls}${t.connected === false ? ' offline' : ''}">
+        <div class="thead"><h3><span class="dot ${t.connected === false ? 'off' : 'on'}"></span><span>${t.name}</span></h3><span class="mode ${cls}">${mode === 'auto' ? 'Auto' : mode === 'heat' ? 'Heat' : mode === 'cool' ? 'Cool' : 'Off'}</span></div>
+        <div class="tbody">
+          <div class="big"><div class="cur">${deg(t.temp)}</div><div class="curl">Current</div></div>
+          <div class="setp"><div class="sps">${set}</div><div class="curl">Set to</div></div>
+          <div class="tmeta">
+            <div>💧 ${t.humidity != null ? t.humidity + '%' : '—'} humidity</div>
+            <div>🌀 Fan ${t.fan || '—'} · ${running}</div>
+            ${t.outside ? `<div>🌤 Outside ${deg(t.outside.temp)}${t.outside.condition ? ' · ' + t.outside.condition : ''}</div>` : ''}
+            ${hold}
+          </div>
+        </div>
+        <div class="sensors">${sensors}</div>
+      </div>`;
+    }).join('') + `<div class="src">Source: ${source === 'ecobee' ? 'ecobee portal (unofficial)' : source} · ${new Date().toLocaleTimeString()}</div>`;
+  };
+  try { await refresh(); } catch (e) { root.innerHTML = `<div class="ctl">Couldn't reach the thermostats (${e.message}).</div>`; return; }
+  climateTimer = setInterval(() => { if ($('#viewer').classList.contains('hidden')) return clearInterval(climateTimer); refresh().catch(() => {}); }, 30000);
 }
 
 // ---- Change a device password from the page and save it to the vault ----

@@ -88,3 +88,25 @@ two checks, reminds every 6 h, and sends a recovery note. Worker secrets: `BREVO
 `ALERT_FROM`; state lives in the `homeapp-state` KV namespace (bound as `STATE`, see
 `relay/worker.js.meta.json`). Manual check: `/alerts/check?k=…` (add `&force` to email now);
 `/alerts/test?k=…` sends a test email.
+
+## Thermostats (ecobee now, Home Assistant later)
+
+ecobee closed its developer API, so `relay/ecobee-worker.js` (`ecobee-relay`) signs in the way the ecobee web
+portal does (Auth0 password grant with the portal's public client id; secrets `ECOBEE_USER`, `ECOBEE_PASSWORD`,
+`RELAY_KEY`; token cached in KV) and reads the same API the portal reads. This is unofficial and may break if
+ecobee changes its login; it is a stop-gap until a Home Assistant bridge at the house takes over.
+
+### Climate data shape
+The Thermostats tile renders whatever `GET <climateRelay>/thermostats?k=…` returns, so any source works if it
+produces this JSON (a Home Assistant relay would map `climate.*` / `sensor.*` / `binary_sensor.*` into it):
+
+```json
+{ "at": "ISO time", "source": "ecobee | homeassistant",
+  "thermostats": [ { "id": "…", "name": "Main Floor", "connected": true,
+      "temp": 72.3, "humidity": 41, "heatSet": 68, "coolSet": 74, "mode": "auto|heat|cool|off", "fan": "auto|on",
+      "running": ["compCool1", "fan"], "hold": { "name": "Away", "until": "2026-10-08 18:00" } | null, "climate": "Home",
+      "outside": { "temp": 88, "condition": "Sunny" } | null,
+      "sensors": [ { "id": "…", "name": "Front Door", "temp": null, "occupied": null, "open": false, "inUse": true } ] } ] }
+```
+`open` is the door/window state (null when the source doesn't know it — ecobee's API generally doesn't;
+Home Assistant via HomeKit does). Temperatures are °F.

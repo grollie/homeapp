@@ -8,7 +8,9 @@ window.HH_DEFAULT_DEVICES = [
     solarRelay: 'https://solar-relay.garyrollie.workers.dev' },
   { icon: '🛰️', name: 'Starlink', sub: 'Dish & account', url: 'http://192.168.100.1', group: 'Network', embed: false,
     note: 'Dish status page on the local network. Account/billing: https://www.starlink.com/account' },
-  { icon: '🌡️', name: 'Ecobee', sub: 'Thermostat', url: 'https://www.ecobee.com/consumerportal/index.html', group: 'Home', embed: false },
+  // Thermostat cards read the "climate shape" from a relay: ecobee-relay today, a Home Assistant relay later.
+  { icon: '🌡️', name: 'Thermostats', sub: 'Thermostats · live', url: 'https://www.ecobee.com/consumerportal/index.html', group: 'Home',
+    climateRelay: 'https://ecobee-relay.garyrollie.workers.dev' },
   { icon: '🏠', name: 'Nest', sub: 'Google Home', url: 'https://home.nest.com', group: 'Home', embed: false },
   { icon: '🚪', name: 'Garage Doors', sub: 'myQ', url: 'https://www.myq.com', group: 'Home', app: true,
     note: 'myQ garage doors are app-only. Open the myQ app on your phone.' },
