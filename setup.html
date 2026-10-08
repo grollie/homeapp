@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home Hub Setup</title>
+<meta name="description" content="Create or edit the encrypted vault for Home Hub.">
+<style>
+:root{--bg:#f4f5f7;--panel:#fff;--text:#1b1f24;--muted:#5f6670;--line:#dfe3e8;--accent:#e8a33d;--accent-ink:#1b1f24;--danger:#c0392b}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#121417;--panel:#1c2026;--text:#e9ecef;--muted:#99a1ab;--line:#2c323a}}
+:root[data-theme=dark]{--bg:#121417;--panel:#1c2026;--text:#e9ecef;--muted:#99a1ab;--line:#2c323a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:16px}
+main{max-width:900px;margin:0 auto}
+h1{font-size:24px;margin:0 0 4px}h2{font-size:17px;margin:28px 0 8px}
+p.muted{color:var(--muted);margin:0 0 12px;font-size:14px}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px}
+input,select{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);width:100%}
+button{font:inherit;cursor:pointer;padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--text)}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+button.del{color:var(--danger)}
+.row{display:grid;gap:8px;grid-template-columns:1fr 1fr;margin-bottom:8px}
+.row.dev{grid-template-columns:48px 1.2fr 2fr 1fr auto;align-items:center}
+.row.user{grid-template-columns:1fr 1fr auto;align-items:center}
+.row.login{grid-template-columns:1fr 1fr 1fr;margin:0 0 8px 56px}
+small{color:var(--muted)}
+.err{color:var(--danger)}.ok{color:#2e8b57}
+@media (max-width:640px){.row,.row.dev,.row.user,.row.login{grid-template-columns:1fr;margin-left:0}}
+</style>
+</head>
+<body>
+<main>
+<h1>Home Hub Setup</h1>
+<p class="muted">Builds the encrypted <code>vault.js</code> that Home Hub reads. Everything you enter here is encrypted in your browser before download — nothing is sent anywhere. Download the file, put it next to <code>index.html</code> in the <code>homeapp</code> repo, and commit.</p>
+
+<div class="box">
+  <h2 style="margin-top:0">Edit an existing vault</h2>
+  <p class="muted">Optional. Skip this to start fresh from the defaults.</p>
+  <div class="row"><input type="file" id="vfile" accept=".js,.json"><input id="vpw" type="password" placeholder="Your Home Hub password" autocomplete="off"></div>
+  <div class="row"><input id="vname" placeholder="Your Home Hub name" autocomplete="off"><button id="vload">Unlock and load</button></div>
+  <div id="vmsg"></div>
+</div>
+
+<h2>Family logins</h2>
+<p class="muted">One per person. A blank password on a loaded vault keeps that person's current password.</p>
+<div id="users"></div>
+<button id="addUser">+ Add person</button>
+
+<h2>Devices</h2>
+<p class="muted">Icon · name · web address · group. Expand a device to add its own username/password or a note, so the family can see it after signing in.</p>
+<div id="devices"></div>
+<button id="addDev">+ Add device</button>
+
+<div class="box" style="margin-top:28px">
+  <button class="primary" id="build">Build &amp; download vault.js</button>
+  <span id="bmsg" style="margin-left:12px"></span>
+</div>
+</main>
+
+<script src="crypto.js"></script>
+<script src="defaults.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let devices = structuredClone(window.HH_DEFAULT_DEVICES);
+let users = [{ name: '', pw: '' }];        // {name, pw, existing?:wrappedEntry}
+let loaded = null;                         // existing vault + rawKey when editing
+
+function renderUsers() {
+  const box = $('#users'); box.innerHTML = '';
+  users.forEach((u, i) => {
+    const r = document.createElement('div'); r.className = 'row user';
+    r.innerHTML = `<input placeholder="Name (e.g. Gary)" autocomplete="off"><input type="password" placeholder="${u.existing ? 'New password (optional)' : 'Password'}" autocomplete="new-password"><button class="del">Remove</button>`;
+    const [n, p, d] = r.children;
+    n.value = u.name; p.value = u.pw;
+    n.oninput = () => (u.name = n.value); p.oninput = () => (u.pw = p.value);
+    d.onclick = () => { users.splice(i, 1); renderUsers(); };
+    box.appendChild(r);
+  });
+}
+function renderDevices() {
+  const box = $('#devices'); box.innerHTML = '';
+  devices.forEach((d, i) => {
+    const r = document.createElement('div'); r.className = 'row dev';
+    r.innerHTML = `<input title="Icon"><input placeholder="Name"><input placeholder="https://…"><input placeholder="Group"><button class="del">✕</button>`;
+    const [ic, nm, url, grp, del] = r.children;
+    ic.value = d.icon || ''; nm.value = d.name || ''; url.value = d.url || ''; grp.value = d.group || '';
+    ic.oninput = () => (d.icon = ic.value); nm.oninput = () => (d.name = nm.value); url.oninput = () => (d.url = url.value); grp.oninput = () => (d.group = grp.value);
+    del.onclick = () => { devices.splice(i, 1); renderDevices(); };
+    box.appendChild(r);
+    const l = document.createElement('div'); l.className = 'row login';
+    l.innerHTML = `<input placeholder="Device username (optional)" autocomplete="off"><input placeholder="Device password (optional)" autocomplete="off"><input placeholder="Note (optional)">`;
+    const [lu, lp, ln] = l.children;
+    lu.value = d.login?.username || ''; lp.value = d.login?.password || ''; ln.value = d.note || '';
+    const setLogin = () => { const o = {}; if (lu.value) o.username = lu.value; if (lp.value) o.password = lp.value; d.login = Object.keys(o).length ? o : undefined; };
+    lu.oninput = setLogin; lp.oninput = setLogin; ln.oninput = () => (d.note = ln.value || undefined);
+    box.appendChild(l);
+  });
+}
+renderUsers(); renderDevices();
+$('#addUser').onclick = () => { users.push({ name: '', pw: '' }); renderUsers(); };
+$('#addDev').onclick = () => { devices.push({ icon: '🔌', name: '', url: '', group: 'Other' }); renderDevices(); };
+
+$('#vload').onclick = async () => {
+  const f = $('#vfile').files[0]; const msg = $('#vmsg'); msg.textContent = '';
+  if (!f) return (msg.innerHTML = '<span class="err">Pick your vault.js first.</span>');
+  try {
+    const txt = await f.text();
+    const vault = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1));
+    const rawKey = await HH.unlockKey(vault, $('#vname').value, $('#vpw').value);
+    const data = await HH.readData(vault, rawKey);
+    devices = data.devices;
+    users = Object.entries(vault.users).map(([id, entry]) => ({ name: entry.name || '', pw: '', existing: entry, id }));
+    loaded = { vault, rawKey };
+    renderUsers(); renderDevices();
+    msg.innerHTML = '<span class="ok">Loaded. Edit below and build a new vault.js.</span>';
+  } catch { msg.innerHTML = '<span class="err">Could not unlock that file with those details.</span>'; }
+  $('#vpw').value = '';
+};
+
+$('#build').onclick = async () => {
+  const msg = $('#bmsg'); msg.textContent = '';
+  const live = users.filter((u) => u.name.trim());
+  if (!live.length) return (msg.innerHTML = '<span class="err">Add at least one person.</span>');
+  for (const u of live) if (!u.pw && !u.existing) return (msg.innerHTML = `<span class="err">${u.name} needs a password.</span>`);
+  for (const u of live) if (u.pw && u.pw.length < 8) return (msg.innerHTML = `<span class="err">${u.name}'s password should be at least 8 characters.</span>`);
+  const rawKey = loaded ? loaded.rawKey : HH.rand(32);
+  const out = { v: 1, users: {}, data: await HH.writeData(rawKey, { devices: devices.filter((d) => d.name.trim()) }) };
+  for (const u of live) {
+    const id = await HH.userId(u.name);
+    out.users[id] = u.pw ? { name: u.name.trim(), ...(await HH.wrapFor(rawKey, u.pw)) } : u.existing;
+  }
+  const blob = new Blob(['window.HH_VAULT = ' + JSON.stringify(out, null, 1) + ';\n'], { type: 'text/javascript' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'vault.js'; a.click();
+  msg.innerHTML = '<span class="ok">Downloaded vault.js — commit it to the homeapp repo.</span>';
+};
+</script>
+</body>
+</html>

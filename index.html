@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home Hub</title>
+<meta name="description" content="Family dashboard for every smart device in the house.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%23e8a33d' d='M12 3 2 12h3v8h5v-5h4v5h5v-8h3z'/></svg>">
+<style>
+:root{--bg:#f4f5f7;--panel:#fff;--text:#1b1f24;--muted:#5f6670;--line:#dfe3e8;--accent:#e8a33d;--accent-ink:#1b1f24;--danger:#c0392b;--shadow:0 1px 3px rgba(0,0,0,.08)}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#121417;--panel:#1c2026;--text:#e9ecef;--muted:#99a1ab;--line:#2c323a;--shadow:0 1px 3px rgba(0,0,0,.5)}}
+:root[data-theme=dark]{--bg:#121417;--panel:#1c2026;--text:#e9ecef;--muted:#99a1ab;--line:#2c323a;--shadow:0 1px 3px rgba(0,0,0,.5)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh}
+button{font:inherit;cursor:pointer}
+input{font:inherit}
+.hidden{display:none!important}
+/* login */
+#login{min-height:100vh;display:grid;place-items:center;padding:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:28px;width:100%;max-width:380px;box-shadow:var(--shadow)}
+.card h1{margin:0 0 4px;font-size:24px}
+.card p{margin:0 0 20px;color:var(--muted);font-size:14px}
+label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
+.card input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)}
+.btn{display:inline-block;padding:10px 16px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--text)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.btn.block{width:100%;margin-top:18px}
+.err{color:var(--danger);font-size:14px;min-height:20px;margin-top:10px}
+/* app */
+header{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+header h1{font-size:18px;margin:0;flex:1}
+header .who{color:var(--muted);font-size:14px}
+main{padding:16px;max-width:1200px;margin:0 auto}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;text-align:left;display:flex;flex-direction:column;gap:6px;box-shadow:var(--shadow);min-height:110px}
+.tile:hover{border-color:var(--accent)}
+.tile .ic{font-size:26px;line-height:1}
+.tile .nm{font-weight:600}
+.tile .sub{font-size:12px;color:var(--muted)}
+.tile .badge{font-size:11px;color:var(--muted);margin-top:auto}
+h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 10px}
+/* viewer */
+#viewer{position:fixed;inset:0;background:var(--bg);z-index:10;display:flex;flex-direction:column}
+#viewer .bar{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+#viewer .bar .t{font-weight:600;flex:1}
+#viewer iframe{flex:1;border:0;width:100%;background:#fff}
+#vnote{padding:14px 16px;font-size:14px;color:var(--muted);background:var(--panel);border-bottom:1px solid var(--line)}
+#vcreds{padding:10px 16px;font-size:14px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+#vcreds code{background:var(--bg);padding:2px 6px;border-radius:4px;user-select:all}
+@media (max-width:480px){.grid{grid-template-columns:repeat(2,1fr)}.tile{min-height:96px;padding:12px}}
+</style>
+</head>
+<body>
+
+<section id="login">
+  <form class="card" id="loginForm" autocomplete="on">
+    <h1>Home Hub</h1>
+    <p>Sign in to see the family's devices.</p>
+    <label for="u">Name</label>
+    <input id="u" name="username" autocomplete="username" required autocapitalize="off">
+    <label for="p">Password</label>
+    <input id="p" name="password" type="password" autocomplete="current-password" required>
+    <button class="btn primary block" type="submit" id="loginBtn">Sign in</button>
+    <div class="err" id="loginErr"></div>
+  </form>
+</section>
+
+<section id="app" class="hidden">
+  <header>
+    <h1>Home Hub</h1>
+    <span class="who" id="who"></span>
+    <button class="btn" id="lockBtn">Sign out</button>
+  </header>
+  <main id="main"></main>
+</section>
+
+<section id="viewer" class="hidden">
+  <div class="bar">
+    <button class="btn" id="backBtn">← Back</button>
+    <span class="t" id="vtitle"></span>
+    <a class="btn" id="vopen" target="_blank" rel="noopener">Open in new tab ↗</a>
+  </div>
+  <div id="vcreds" class="hidden"></div>
+  <div id="vnote" class="hidden"></div>
+  <iframe id="frame" title="Device portal" allow="fullscreen; camera; microphone; geolocation" referrerpolicy="no-referrer"></iframe>
+</section>
+
+<script src="crypto.js"></script>
+<script src="vault.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const vault = window.HH_VAULT;
+let data = null, rawKey = null;
+
+if (!vault) {
+  $('#loginErr').textContent = 'No vault.js found yet. Open setup.html to create one.';
+  $('#loginBtn').disabled = true;
+}
+
+$('#loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = $('#loginBtn'); btn.disabled = true; btn.textContent = 'Checking…';
+  $('#loginErr').textContent = '';
+  try {
+    rawKey = await HH.unlockKey(vault, $('#u').value, $('#p').value);
+    data = await HH.readData(vault, rawKey);
+    sessionStorage.setItem('hh', JSON.stringify({ name: $('#u').value.trim(), key: HH.b64(rawKey) }));
+    show();
+  } catch {
+    $('#loginErr').textContent = 'Wrong name or password.';
+  } finally { btn.disabled = false; btn.textContent = 'Sign in'; $('#p').value = ''; }
+});
+
+// Stay signed in for this browser tab only.
+(async () => {
+  try {
+    const s = JSON.parse(sessionStorage.getItem('hh'));
+    if (s && vault) { rawKey = HH.unb64(s.key); data = await HH.readData(vault, rawKey); $('#u').value = s.name; show(); }
+  } catch { sessionStorage.removeItem('hh'); }
+})();
+
+$('#lockBtn').onclick = () => { sessionStorage.removeItem('hh'); location.reload(); };
+
+function show() {
+  $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
+  $('#who').textContent = $('#u').value.trim();
+  const main = $('#main'); main.innerHTML = '';
+  const groups = {};
+  for (const d of data.devices) (groups[d.group || 'Devices'] ||= []).push(d);
+  for (const [g, list] of Object.entries(groups)) {
+    const h = document.createElement('h2'); h.className = 'sec'; h.textContent = g; main.appendChild(h);
+    const grid = document.createElement('div'); grid.className = 'grid'; main.appendChild(grid);
+    for (const d of list) {
+      const b = document.createElement('button'); b.className = 'tile';
+      b.innerHTML = `<span class="ic">${d.icon || '🔌'}</span><span class="nm"></span><span class="sub"></span><span class="badge"></span>`;
+      b.querySelector('.nm').textContent = d.name;
+      b.querySelector('.sub').textContent = d.sub || '';
+      b.querySelector('.badge').textContent = d.app ? 'App only' : (d.embed === false ? 'Opens in new tab' : 'Web portal');
+      b.onclick = () => openDevice(d);
+      grid.appendChild(b);
+    }
+  }
+}
+
+function openDevice(d) {
+  $('#vtitle').textContent = d.name;
+  $('#vopen').href = d.url || '#';
+  const creds = $('#vcreds'); creds.innerHTML = '';
+  if (d.login) {
+    creds.classList.remove('hidden');
+    creds.innerHTML = `<span>Login for this device:</span>`;
+    for (const [k, v] of Object.entries(d.login)) {
+      const s = document.createElement('span'); s.innerHTML = `${k}: <code></code>`; s.querySelector('code').textContent = v; creds.appendChild(s);
+    }
+  } else creds.classList.add('hidden');
+  const note = $('#vnote');
+  if (d.app) {
+    note.classList.remove('hidden');
+    note.textContent = d.note || `${d.name} only works through its phone app. Use the button above to open its website.`;
+  } else if (d.embed === false) {
+    note.classList.remove('hidden');
+    note.textContent = d.note || `${d.name} doesn't allow being shown inside another page. Use "Open in new tab".`;
+  } else note.classList.add('hidden');
+  const f = $('#frame');
+  if (d.url && !d.app && d.embed !== false) { f.classList.remove('hidden'); f.src = d.url; }
+  else { f.classList.add('hidden'); f.src = 'about:blank'; }
+  $('#viewer').classList.remove('hidden');
+  history.pushState({ v: 1 }, '', '#' + encodeURIComponent(d.name));
+}
+function closeViewer() { $('#viewer').classList.add('hidden'); $('#frame').src = 'about:blank'; }
+$('#backBtn').onclick = () => history.back();
+window.addEventListener('popstate', () => { if (!location.hash) closeViewer(); });
+</script>
+</body>
+</html>
