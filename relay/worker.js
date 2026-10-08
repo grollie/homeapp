@@ -27,7 +27,11 @@ export default {
     try {
       if (url.pathname === '/metrics') return Response.json({ at: new Date().toISOString(), sites: await allMetrics(env, url.searchParams.has('fresh')) }, { headers: cors });
       if (url.pathname === '/alerts/check') return Response.json(await checkMppt(env, url.searchParams.has('force')), { headers: cors });
-      if (url.pathname === '/alerts/test') { await sendMail(env, 'Home Hub test alert', 'This is a test from the solar-relay worker. MPPT alerts are working.'); return Response.json({ sent: true }, { headers: cors }); }
+      if (url.pathname === '/alerts/test') {
+        const to = url.searchParams.get('to');                 // optional override, e.g. &to=someone@example.com
+        await sendMail(env, 'Home Hub test alert', 'This is a test from the solar-relay worker. MPPT alerts are working.', to);
+        return Response.json({ sent: true, to: to || env.ALERT_TO }, { headers: cors });
+      }
       return new Response('Not found', { status: 404, headers: cors });
     } catch (e) {
       return Response.json({ error: e.message }, { status: 502, headers: cors });
@@ -94,9 +98,9 @@ async function checkMppt(env, force = false) {
   return { at: new Date().toISOString(), report };
 }
 
-async function sendMail(env, subject, text) {
+async function sendMail(env, subject, text, toOverride) {
   if (!env.BREVO_KEY) throw new Error('BREVO_KEY not set');
-  const to = (env.ALERT_TO || '').split(',').map((e) => ({ email: e.trim() })).filter((e) => e.email);
+  const to = (toOverride || env.ALERT_TO || '').split(',').map((e) => ({ email: e.trim() })).filter((e) => e.email);
   const r = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: { 'api-key': env.BREVO_KEY, 'Content-Type': 'application/json', Accept: 'application/json' },
