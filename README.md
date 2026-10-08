@@ -70,3 +70,11 @@ Assistant cloud token (secret `SA_TOKEN`) and a shared `RELAY_KEY`; the page cal
 `https://solar-relay.garyrollie.workers.dev/metrics?k=<RELAY_KEY>` and gets every site's metrics.
 To redeploy after editing worker.js: Cloudflare dashboard → Workers & Pages → solar-relay → Edit code,
 or `PUT /accounts/<id>/workers/scripts/solar-relay` with the Cloudflare API.
+
+## Battery relay (Tuya / Smart Life)
+
+`relay/tuya-worker.js` runs as the `tuya-relay` worker; it signs Tuya OpenAPI calls with the IoT project's
+Access ID/Secret (secrets `TUYA_ID`, `TUYA_SECRET`) and returns every linked Smart Life device with its
+status at `/devices?k=<RELAY_KEY>`. The Solar tile shows each battery as a chip under the site it belongs
+to; the site mapping lives in the vault on the Solar Assistant tile (`batteries: { "<site name>": [ids or
+name fragments] }`). Tuya's free Trial plan must be renewed periodically at iot.tuya.com → Cloud → project.

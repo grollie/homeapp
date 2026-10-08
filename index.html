@@ -72,6 +72,14 @@ h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--
 .st{background:var(--bg);border-radius:10px;padding:10px 12px}
 .st .sv{font-size:20px;font-weight:600;line-height:1.2}.st .sl{font-size:12px;color:var(--muted)}
 .st.pv .sv{color:var(--accent)}.st.soc .sv{color:#2e8b57}
+/* compact battery chips: fill bar behind the %; wraps to fit any number */
+.bstrip{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.bstrip:empty{display:none}
+.bchip{position:relative;overflow:hidden;display:inline-flex;align-items:baseline;gap:6px;padding:4px 10px;border-radius:8px;background:var(--bg);border:1px solid var(--line);font-size:13px;min-width:84px}
+.bchip i{position:absolute;left:0;top:0;bottom:0;background:#2e8b57;opacity:.22}
+.bchip.mid i{background:var(--accent)}.bchip.low i{background:var(--danger)}
+.bchip b{position:relative;font-size:15px}.bchip small{position:relative;color:var(--muted);font-size:11px}
+.bchip.off{opacity:.45}
 @media (max-width:480px){.grid{grid-template-columns:repeat(2,1fr)}.tile{min-height:96px;padding:12px}}
 </style>
 </head>
@@ -200,7 +208,7 @@ function openDevice(d) {
   const f = $('#frame'), live = $('#vlive'); live.innerHTML = '';
   if (d.rachioKey || d.solarKey) {
     live.classList.remove('hidden'); f.classList.add('hidden'); f.src = 'about:blank'; note.classList.add('hidden');
-    if (d.rachioKey) rachioPanel(d.rachioKey, live); else solarPanel(d.solarRelay, d.solarKey, live);
+    if (d.rachioKey) rachioPanel(d.rachioKey, live); else solarPanel(d, live);
   }
   else if (d.url && !d.app && d.embed !== false) { live.classList.add('hidden'); f.classList.remove('hidden'); f.src = d.url; }
   else { live.classList.add('hidden'); f.classList.add('hidden'); f.src = 'about:blank'; }
@@ -212,22 +220,46 @@ function closeViewer() { $('#viewer').classList.add('hidden'); $('#frame').src =
 
 // ---- Solar Assistant merged panel (both sites, via the relay worker in relay/worker.js) ----
 let solarTimer = null;
-async function solarPanel(relay, key, root) {
+async function solarPanel(d, root) {
   clearInterval(solarTimer);
+  const relay = d.solarRelay, key = d.solarKey;
   const kW = (w) => (Math.abs(w) >= 1000 ? (w / 1000).toFixed(2) + ' kW' : Math.round(w) + ' W');
   const stat = (label, val, cls = '') => `<div class="st ${cls}"><div class="sv">${val}</div><div class="sl">${label}</div></div>`;
   const row = (pv, load, soc, batt, grid, socLabel = 'Battery') => stat('Solar', kW(pv), 'pv') + stat('Load', kW(load)) + stat(socLabel, `${soc.toFixed(0)}%`, 'soc') +
     stat(batt >= 0 ? 'Charging' : 'Discharging', kW(Math.abs(batt))) + stat(grid >= 0 ? 'From grid' : 'To grid', kW(Math.abs(grid)));
   root.innerHTML = '<div class="ctl">Connecting to Solar Assistant…</div>';
   let built = false;
+
+  // Smart Life (Tuya) batteries, shown as a compact strip under the site they belong to.
+  // d.batteries maps site name -> list of device ids or name fragments; unmatched ones go in a "Batteries" strip at the bottom.
+  const socOf = (st) => { for (const k of ['soc', 'battery_percentage', 'residual_electricity', 'battery_state_of_charge', 'percent', 'battery']) { const v = +st[k]; if (k in st && v >= 0 && v <= 100) return v; } for (const [k, v] of Object.entries(st)) if (/soc|percent|residual/i.test(k) && +v >= 0 && +v <= 100) return +v; return null; };
+  const chip = (b) => { const soc = socOf(b.status); const cls = soc == null ? '' : soc < 20 ? ' low' : soc < 50 ? ' mid' : ' ok'; return `<span class="bchip${b.online ? '' : ' off'}${cls}" title="${b.name}${b.online ? '' : ' (offline)'}"><i style="width:${soc ?? 0}%"></i><b>${soc == null ? '—' : soc + '%'}</b><small>${b.name.replace(/battery/i, '').trim() || b.name}</small></span>`; };
+  const fetchBatteries = async () => {
+    if (!d.tuyaRelay) return null;
+    const r = await fetch(`${d.tuyaRelay.replace(/\/$/, '')}/devices?k=${encodeURIComponent(key)}`);
+    if (!r.ok) return null;
+    return (await r.json()).devices || [];
+  };
+  const forSite = (bats, site) => {
+    const want = (d.batteries || {})[site.name] || (d.batteries || {})[site.description] || [];
+    return bats.filter((b) => want.some((w) => b.id === w || b.name.toLowerCase().includes(String(w).toLowerCase())) || (!want.length && site.description && b.name.toLowerCase().includes(site.description.toLowerCase())));
+  };
+
   const refresh = async () => {
     const r = await fetch(`${relay.replace(/\/$/, '')}/metrics?k=${encodeURIComponent(key)}`);
     if (!r.ok) throw new Error('relay ' + r.status);
-    const { sites } = await r.json();
+    const [{ sites }, bats] = await Promise.all([r.json(), fetchBatteries().catch(() => null)]);
     if (!built) {
       root.innerHTML = '<div class="ctl sum"><h3>☀️ Both systems</h3><div class="stats"></div></div>' + sites.map((s) =>
-        `<div class="ctl site"><h3><span class="dot"></span><span></span></h3><div class="meta"></div><div class="stats"></div><div class="acts"><a class="btn small" target="_blank" rel="noopener">Full dashboard ↗</a></div></div>`).join('');
+        `<div class="ctl site"><h3><span class="dot"></span><span></span></h3><div class="meta"></div><div class="stats"></div><div class="bstrip"></div><div class="acts"><a class="btn small" target="_blank" rel="noopener">Full dashboard ↗</a></div></div>`).join('') +
+        '<div class="ctl extra hidden"><h3>🔋 Batteries</h3><div class="bstrip"></div></div>';
       built = true;
+    }
+    if (bats) {
+      const used = new Set();
+      sites.forEach((s, i) => { const mine = forSite(bats, s); mine.forEach((b) => used.add(b.id)); root.querySelectorAll('.ctl.site .bstrip')[i].innerHTML = mine.map(chip).join(''); });
+      const rest = bats.filter((b) => !used.has(b.id));
+      const ex = root.querySelector('.ctl.extra'); ex.classList.toggle('hidden', !rest.length); ex.querySelector('.bstrip').innerHTML = rest.map(chip).join('');
     }
     const tot = { pv: 0, load: 0, grid: 0, batt: 0, soc: [] };
     sites.forEach((s, i) => {
