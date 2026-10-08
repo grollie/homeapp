@@ -78,3 +78,13 @@ Access ID/Secret (secrets `TUYA_ID`, `TUYA_SECRET`) and returns every linked Sma
 status at `/devices?k=<RELAY_KEY>`. The Solar tile shows each battery as a chip under the site it belongs
 to; the site mapping lives in the vault on the Solar Assistant tile (`batteries: { "<site name>": [ids or
 name fragments] }`). Tuya's free Trial plan must be renewed periodically at iot.tuya.com → Cloud → project.
+
+## MPPT fault alerts
+
+Each inverter card shows its MPPT strings. If one string reads ≤5 W while another on the same inverter
+makes >100 W, the card turns red with a message. The `solar-relay` worker also checks every 5 minutes
+(cron) and emails garyrollie@yahoo.com + mandimurph@yahoo.com via Brevo once the fault has persisted for
+two checks, reminds every 6 h, and sends a recovery note. Worker secrets: `BREVO_KEY`, `ALERT_TO`,
+`ALERT_FROM`; state lives in the `homeapp-state` KV namespace (bound as `STATE`, see
+`relay/worker.js.meta.json`). Manual check: `/alerts/check?k=…` (add `&force` to email now);
+`/alerts/test?k=…` sends a test email.

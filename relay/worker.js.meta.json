@@ -1,0 +1,9 @@
+{
+    "bindings":  [
+                     {
+                         "namespace_id":  "4377f452c3274aa49f791b46ff8c6045",
+                         "name":  "STATE",
+                         "type":  "kv_namespace"
+                     }
+                 ]
+}
