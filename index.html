@@ -71,7 +71,7 @@ h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:6px}
 .st{background:var(--bg);border-radius:10px;padding:10px 12px}
 .st .sv{font-size:20px;font-weight:600;line-height:1.2}.st .sl{font-size:12px;color:var(--muted)}
-.st.pv .sv{color:var(--accent)}.st.soc .sv{color:#2e8b57}
+.st.pv .sv{color:var(--accent)}.st.soc .sv{color:#2e8b57}.st.run .sv{color:#4a90d9}
 /* compact battery chips: fill bar behind the %; wraps to fit any number */
 .bstrip{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .bstrip:empty{display:none}
@@ -274,9 +274,18 @@ async function solarPanel(d, root) {
         '<div class="ctl extra hidden"><h3>🔋 Batteries</h3><div class="bstrip"></div></div>';
       built = true;
     }
+    // Runtime at the current draw: remaining Wh in the packs / watts leaving them. null = nothing known / not discharging.
+    const runtime = (packs) => {
+      const live = packs.filter((b) => b.online && b.remainAh != null);
+      if (!live.length) return null;
+      const wh = live.reduce((a, b) => a + b.remainAh * b.volts, 0), out = live.reduce((a, b) => a + Math.max(0, -(b.watts || 0)), 0);
+      return { wh, out, hours: out > 0 ? wh / out : Infinity };
+    };
+    const fmtRun = (r) => !r ? null : r.hours === Infinity ? 'Charging' : r.hours >= 48 ? `${(r.hours / 24).toFixed(1)} d` : `${Math.floor(r.hours)}h ${Math.round((r.hours % 1) * 60)}m`;
+    const runs = [];
     if (bats) {
       const used = new Set();
-      sites.forEach((s, i) => { const mine = forSite(bats, s); mine.forEach((b) => used.add(b.id)); root.querySelectorAll('.ctl.site .bstrip')[i].innerHTML = strip(mine); });
+      sites.forEach((s, i) => { const mine = forSite(bats, s); mine.forEach((b) => used.add(b.id)); runs[i] = runtime(mine); root.querySelectorAll('.ctl.site .bstrip')[i].innerHTML = strip(mine); });
       const rest = bats.filter((b) => !used.has(b.id));
       const ex = root.querySelector('.ctl.extra'); ex.classList.toggle('hidden', !rest.length); ex.querySelector('.bstrip').innerHTML = strip(rest);
     }
@@ -292,10 +301,13 @@ async function solarPanel(d, root) {
       tot.pv += pv; tot.load += load; tot.grid += grid; tot.batt += batt; tot.soc.push(soc);
       el.querySelector('.dot').className = 'dot on';
       el.querySelector('.meta').textContent = `Updated ${new Date().toLocaleTimeString()}${m['inverter_1/device_mode'] ? ' · ' + m['inverter_1/device_mode'].value : ''}${m['total/capacity'] ? ' · ' + m['total/capacity'].value + ' kWh battery' : ''}`;
-      el.querySelector('.stats').innerHTML = row(pv, load, soc, batt, grid);
+      const rt = fmtRun(runs[i]);
+      el.querySelector('.stats').innerHTML = row(pv, load, soc, batt, grid) + (rt ? stat('Runtime at this load', rt, 'run') : '');
     });
     const soc = tot.soc.length ? tot.soc.reduce((a, b) => a + b, 0) / tot.soc.length : 0;
-    root.querySelector('.sum .stats').innerHTML = row(tot.pv, tot.load, soc, tot.batt, tot.grid, 'Battery avg');
+    // Banks aren't shared between sites, so the house runs until the first bank empties.
+    const all = runs.filter(Boolean), rtAll = all.length ? fmtRun({ hours: Math.min(...all.map((r) => r.hours)) }) : null;
+    root.querySelector('.sum .stats').innerHTML = row(tot.pv, tot.load, soc, tot.batt, tot.grid, 'Battery avg') + (rtAll ? stat('Runtime (first bank empty)', rtAll, 'run') : '');
   };
   try { await refresh(); } catch (e) { root.innerHTML = `<div class="ctl">Couldn't reach Solar Assistant (${e.message}).</div>`; return; }
   solarTimer = setInterval(() => { if ($('#viewer').classList.contains('hidden')) return clearInterval(solarTimer); refresh().catch(() => {}); }, 10000);
