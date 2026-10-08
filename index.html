@@ -71,6 +71,13 @@ h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--
 .ctl .acts button{padding:7px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:14px}
 .ctl .msg{font-size:13px;margin-top:8px;color:var(--muted)}
 .ctl.sum{border-color:var(--accent)}
+.ctl.alert{border:2px solid var(--danger);background:color-mix(in srgb,var(--danger) 10%,var(--panel))}
+.ctl.alert h3 .dot{background:var(--danger)}
+.alertbox{background:var(--danger);color:#fff;font-weight:600;padding:10px 12px;border-radius:8px;margin:4px 0 10px}
+.mppts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.mppt{font-size:13px;color:var(--muted);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:4px 10px}
+.mppt b{color:var(--text)}
+.mppt.dead{border-color:var(--danger);color:var(--danger)}.mppt.dead b{color:var(--danger)}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:6px}
 .st{background:var(--bg);border-radius:10px;padding:10px 12px}
 .st .sv{font-size:20px;font-weight:600;line-height:1.2}.st .sl{font-size:12px;color:var(--muted)}
@@ -283,7 +290,7 @@ async function solarPanel(d, root) {
     const [{ sites }, bats] = await Promise.all([r.json(), fetchBatteries().catch(() => null)]);
     if (!built) {
       root.innerHTML = '<div class="ctl sum"><h3>☀️ Both systems</h3><div class="stats"></div></div>' + sites.map((s) =>
-        `<div class="ctl site"><h3><span class="dot"></span><span></span></h3><div class="meta"></div><div class="stats"></div><div class="bstrip"></div><div class="acts"><a class="btn small" target="_blank" rel="noopener">Full dashboard ↗</a></div></div>`).join('') +
+        `<div class="ctl site"><h3><span class="dot"></span><span></span></h3><div class="meta"></div><div class="alertbox hidden"></div><div class="stats"></div><div class="mppts"></div><div class="bstrip"></div><div class="acts"><a class="btn small" target="_blank" rel="noopener">Full dashboard ↗</a></div></div>`).join('') +
         '<div class="ctl extra hidden"><h3>🔋 Batteries</h3><div class="bstrip"></div></div>';
       built = true;
     }
@@ -305,7 +312,7 @@ async function solarPanel(d, root) {
       const rest = bats.filter((b) => !used.has(b.id));
       const ex = root.querySelector('.ctl.extra'); ex.classList.toggle('hidden', !rest.length); ex.querySelector('.bstrip').innerHTML = strip(rest);
     }
-    const tot = { pv: 0, load: 0, grid: 0, batt: 0, soc: [] };
+    const tot = { pv: 0, load: 0, grid: 0, batt: 0, soc: [] }, faults = [];
     sites.forEach((s, i) => {
       const el = root.querySelectorAll('.ctl.site')[i];
       el.querySelector('h3 span:last-child').textContent = s.description ? `${s.description} (${s.name})` : s.name;
@@ -318,7 +325,20 @@ async function solarPanel(d, root) {
       el.querySelector('.dot').className = 'dot on';
       el.querySelector('.meta').textContent = `Updated ${new Date().toLocaleTimeString()}${m['inverter_1/device_mode'] ? ' · ' + m['inverter_1/device_mode'].value : ''}${m['total/capacity'] ? ' · ' + m['total/capacity'].value + ' kWh battery' : ''}`;
       const rt = fmtRun(runs[i]);
+      // MPPT strings: one at ~0 while the other is producing means a string/breaker/connector fault.
+      const mppts = Object.keys(m).filter((t) => /^inverter_\d+\/pv_power_\d+$/.test(t)).sort().map((t) => ({ t, w: v(t), volts: v(t.replace('pv_power', 'pv_voltage')), amps: v(t.replace('pv_power', 'pv_current')) }));
+      const fault = mppts.length > 1 && mppts.some((x) => x.w <= 5) && mppts.some((x) => x.w > 100);
+      const mp = mppts.map((x, k) => { const dead = fault && x.w <= 5; return `<span class="mppt${dead ? ' dead' : ''}" title="${x.volts} V · ${x.amps} A">MPPT ${k + 1}: <b>${kW(x.w)}</b>${dead ? ' ⚠' : ''}</span>`; }).join('');
       el.querySelector('.stats').innerHTML = row(pv, load, soc, batt, grid) + (rt ? stat(`Runtime to ${reserve}%`, rt, 'run') : '');
+      el.querySelector('.mppts').innerHTML = mp;
+      el.classList.toggle('alert', fault);
+      const box = el.querySelector('.alertbox'); box.classList.toggle('hidden', !fault);
+      if (fault) {
+        const dead = mppts.filter((x) => x.w <= 5).map((x) => 'MPPT ' + (mppts.indexOf(x) + 1)).join(' and ');
+        const ok = mppts.filter((x) => x.w > 100).map((x) => 'MPPT ' + (mppts.indexOf(x) + 1) + ' is making ' + kW(x.w)).join(', ');
+        box.textContent = `⚠ ${dead} reads 0 W while ${ok}. Check that string's breaker, fuse and connectors.`;
+        faults.push(s.description || s.name);
+      }
     });
     const soc = tot.soc.length ? tot.soc.reduce((a, b) => a + b, 0) / tot.soc.length : 0;
     // Banks aren't shared between sites, so the house runs until the first bank empties.
