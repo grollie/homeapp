@@ -36,8 +36,9 @@ your `vault.js` and your own login.) Make changes, then build & publish or downl
 
 | Device | Inside the page? | Why |
 |---|---|---|
+| Rachio | Yes — live zones, run/stop, rain delay | Uses the Rachio API with the key stored in the vault |
 | FortiRecorder ×2 | Yes (on home Wi-Fi / VPN) | Local web pages |
-| Solar Assistant ×2, Ecobee, Nest, Rachio, Starlink, FortiCamera Cloud, Smart Life | New tab | Those sites block being embedded |
+| Solar Assistant ×2, Ecobee, Nest, Starlink, FortiCamera Cloud, Smart Life | New tab | Those sites block being embedded |
 | myQ, First Alert, Whisker (Litter-Robot, Feeder-Robot), Matic | App only | No web portal exists; tile links to the vendor site |
 
 Local devices only load when you're on the home network or connected to the home VPN.

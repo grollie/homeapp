@@ -22,7 +22,7 @@ button.del{color:var(--danger)}
 .row{display:grid;gap:8px;grid-template-columns:1fr 1fr;margin-bottom:8px}
 .row.dev{grid-template-columns:48px 1.2fr 2fr 1fr auto;align-items:center}
 .row.user{grid-template-columns:1fr 1fr auto;align-items:center}
-.row.login{grid-template-columns:1fr 1fr 1fr;margin:0 0 8px 56px}
+.row.login{grid-template-columns:1fr 1fr 1fr 1fr;margin:0 0 8px 56px}
 small{color:var(--muted)}
 .err{color:var(--danger)}.ok{color:#2e8b57}
 @media (max-width:640px){.row,.row.dev,.row.user,.row.login{grid-template-columns:1fr;margin-left:0}}
@@ -118,11 +118,11 @@ function renderDevices() {
     del.onclick = () => { devices.splice(i, 1); renderDevices(); };
     box.appendChild(r);
     const l = document.createElement('div'); l.className = 'row login';
-    l.innerHTML = `<input placeholder="Device username (optional)" autocomplete="off"><input placeholder="Device password (optional)" autocomplete="off"><input placeholder="Note (optional)">`;
-    const [lu, lp, ln] = l.children;
-    lu.value = d.login?.username || ''; lp.value = d.login?.password || ''; ln.value = d.note || '';
+    l.innerHTML = `<input placeholder="Device username (optional)" autocomplete="off"><input placeholder="Device password (optional)" autocomplete="off"><input placeholder="Note (optional)"><input placeholder="Rachio API key (Rachio only)" autocomplete="off">`;
+    const [lu, lp, ln, lk] = l.children;
+    lu.value = d.login?.username || ''; lp.value = d.login?.password || ''; ln.value = d.note || ''; lk.value = d.rachioKey || '';
     const setLogin = () => { const o = {}; if (lu.value) o.username = lu.value; if (lp.value) o.password = lp.value; d.login = Object.keys(o).length ? o : undefined; };
-    lu.oninput = setLogin; lp.oninput = setLogin; ln.oninput = () => (d.note = ln.value || undefined);
+    lu.oninput = setLogin; lp.oninput = setLogin; ln.oninput = () => (d.note = ln.value || undefined); lk.oninput = () => (d.rachioKey = lk.value.trim() || undefined);
     box.appendChild(l);
   });
 }

@@ -47,6 +47,21 @@ h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--
 #vnote{padding:14px 16px;font-size:14px;color:var(--muted);background:var(--panel);border-bottom:1px solid var(--line)}
 #vcreds{padding:10px 16px;font-size:14px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;gap:16px;flex-wrap:wrap;align-items:center}
 #vcreds code{background:var(--bg);padding:2px 6px;border-radius:4px;user-select:all}
+#vlive{flex:1;overflow:auto;padding:16px;max-width:900px;width:100%;margin:0 auto}
+.ctl{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px;box-shadow:var(--shadow)}
+.ctl h3{margin:0 0 2px;font-size:17px;display:flex;align-items:center;gap:8px}
+.dot{width:10px;height:10px;border-radius:50%;background:#999;display:inline-block}
+.dot.on{background:#2e8b57}.dot.off{background:var(--danger)}
+.ctl .meta{font-size:13px;color:var(--muted);margin-bottom:10px}
+.zone{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--line);flex-wrap:wrap}
+.zone .zn{flex:1;min-width:140px}
+.zone .zl{font-size:12px;color:var(--muted)}
+.zone select,.zone button{padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:14px}
+.zone button.run{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.zone button:disabled{opacity:.4;cursor:not-allowed}
+.ctl .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.ctl .acts button{padding:7px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:14px}
+.ctl .msg{font-size:13px;margin-top:8px;color:var(--muted)}
 @media (max-width:480px){.grid{grid-template-columns:repeat(2,1fr)}.tile{min-height:96px;padding:12px}}
 </style>
 </head>
@@ -84,6 +99,7 @@ h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--
   </div>
   <div id="vcreds" class="hidden"></div>
   <div id="vnote" class="hidden"></div>
+  <div id="vlive" class="hidden"></div>
   <iframe id="frame" title="Device portal" allow="fullscreen; camera; microphone; geolocation" referrerpolicy="no-referrer"></iframe>
 </section>
 
@@ -163,13 +179,50 @@ function openDevice(d) {
     note.classList.remove('hidden');
     note.textContent = d.note || `${d.name} doesn't allow being shown inside another page. Use "Open in new tab".`;
   } else note.classList.add('hidden');
-  const f = $('#frame');
-  if (d.url && !d.app && d.embed !== false) { f.classList.remove('hidden'); f.src = d.url; }
-  else { f.classList.add('hidden'); f.src = 'about:blank'; }
+  const f = $('#frame'), live = $('#vlive'); live.innerHTML = '';
+  if (d.rachioKey) { live.classList.remove('hidden'); f.classList.add('hidden'); f.src = 'about:blank'; note.classList.add('hidden'); rachioPanel(d.rachioKey, live); }
+  else if (d.url && !d.app && d.embed !== false) { live.classList.add('hidden'); f.classList.remove('hidden'); f.src = d.url; }
+  else { live.classList.add('hidden'); f.classList.add('hidden'); f.src = 'about:blank'; }
   $('#viewer').classList.remove('hidden');
   history.pushState({ v: 1 }, '', '#' + encodeURIComponent(d.name));
 }
-function closeViewer() { $('#viewer').classList.add('hidden'); $('#frame').src = 'about:blank'; }
+function closeViewer() { $('#viewer').classList.add('hidden'); $('#frame').src = 'about:blank'; $('#vlive').innerHTML = ''; }
+
+// ---- Rachio live panel (public API, called straight from the browser) ----
+async function rachioPanel(key, root) {
+  const api = async (path, method = 'GET', body) => {
+    const r = await fetch('https://api.rach.io/1/public/' + path, { method, headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
+    if (!r.ok) throw new Error('Rachio ' + r.status);
+    return r.status === 204 ? null : r.json();
+  };
+  const ago = (ms) => { if (!ms) return 'never'; const d = (Date.now() - ms) / 864e5; return d < 1 ? 'today' : d < 2 ? 'yesterday' : Math.floor(d) + ' days ago'; };
+  root.innerHTML = '<div class="ctl">Loading Rachio…</div>';
+  try {
+    const me = await api('person/info'), person = await api('person/' + me.id);
+    root.innerHTML = '';
+    for (const dev of person.devices) {
+      const c = document.createElement('div'); c.className = 'ctl';
+      const online = dev.status === 'ONLINE';
+      const rain = dev.rainDelayExpirationDate > Date.now() ? ` · rain delay until ${new Date(dev.rainDelayExpirationDate).toLocaleString()}` : '';
+      c.innerHTML = `<h3><span class="dot ${online ? 'on' : 'off'}"></span><span></span></h3><div class="meta">${online ? 'Online' : 'Offline'} · ${dev.model.replace('GENERATION', 'Gen ').replace('_', ' ').toLowerCase()}${rain}</div><div class="zones"></div><div class="acts"><button class="stop">Stop all watering</button><button class="rain">Rain delay 24h</button><button class="clear">Clear rain delay</button></div><div class="msg"></div>`;
+      c.querySelector('h3 span:last-child').textContent = dev.name;
+      const msg = c.querySelector('.msg');
+      const say = async (fn, ok) => { try { await fn(); msg.textContent = ok; } catch (e) { msg.textContent = e.message; } };
+      const zones = c.querySelector('.zones');
+      for (const z of dev.zones.filter((z) => z.enabled).sort((a, b) => a.zoneNumber - b.zoneNumber)) {
+        const row = document.createElement('div'); row.className = 'zone';
+        row.innerHTML = `<div class="zn"><div></div><div class="zl">Zone ${z.zoneNumber} · last run ${ago(z.lastWateredDate)}</div></div><select>${[1, 3, 5, 10, 15, 20, 30].map((m) => `<option value="${m}"${m === 5 ? ' selected' : ''}>${m} min</option>`).join('')}</select><button class="run"${online ? '' : ' disabled'}>Run</button>`;
+        row.querySelector('.zn div').textContent = z.name;
+        row.querySelector('.run').onclick = () => { const m = +row.querySelector('select').value; say(() => api('zone/start', 'PUT', { id: z.id, duration: m * 60 }), `Running ${z.name} for ${m} min.`); };
+        zones.appendChild(row);
+      }
+      c.querySelector('.stop').onclick = () => say(() => api('device/stop_water', 'PUT', { id: dev.id }), 'Stopped all watering.');
+      c.querySelector('.rain').onclick = () => say(() => api('device/rain_delay', 'PUT', { id: dev.id, duration: 86400 }), 'Rain delay set for 24 hours.');
+      c.querySelector('.clear').onclick = () => say(() => api('device/rain_delay', 'PUT', { id: dev.id, duration: 0 }), 'Rain delay cleared.');
+      root.appendChild(c);
+    }
+  } catch (e) { root.innerHTML = `<div class="ctl">Couldn't reach Rachio (${e.message}). Use "Open in new tab".</div>`; }
+}
 $('#backBtn').onclick = () => history.back();
 window.addEventListener('popstate', () => { if (!location.hash) closeViewer(); });
 </script>
