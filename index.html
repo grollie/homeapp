@@ -97,6 +97,9 @@ h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--
 .occ{width:9px;height:9px;border-radius:50%;background:var(--line);display:inline-block}.occ.on{background:#2e8b57;box-shadow:0 0 0 3px rgba(46,139,87,.25)}
 .door{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;color:#fff;background:#2e8b57}.door.open{background:var(--danger)}
 .src{font-size:12px;color:var(--muted);text-align:right;padding:4px 2px}
+.connect p.muted{color:var(--muted);font-size:14px;margin:4px 0 10px}
+.connect input{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);width:200px;font-size:16px;letter-spacing:2px}
+.connect button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
 @media (max-width:520px){.tbody{grid-template-columns:auto 1fr}.tmeta{grid-column:1/-1}.cur{font-size:44px}}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:6px}
 .st{background:var(--bg);border-radius:10px;padding:10px 12px}
@@ -378,8 +381,9 @@ async function climatePanel(d, root) {
   root.innerHTML = '<div class="ctl">Connecting to the thermostats…</div>';
   const refresh = async () => {
     const r = await fetch(`${d.climateRelay.replace(/\/$/, '')}/thermostats?k=${encodeURIComponent(d.solarKey || d.climateKey)}`);
-    if (!r.ok) throw new Error('relay ' + r.status);
-    const { thermostats, source } = await r.json();
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || 'relay ' + r.status);
+    const { thermostats, source } = body;
     root.innerHTML = thermostats.map((t) => {
       const mode = (t.mode || 'off').toLowerCase(), cls = modeCls[mode] || 'off';
       const set = mode === 'auto' ? `<span class="sp heat">${deg(t.heatSet)}</span><span class="sep">–</span><span class="sp cool">${deg(t.coolSet)}</span>`
@@ -403,7 +407,19 @@ async function climatePanel(d, root) {
       </div>`;
     }).join('') + `<div class="src">Source: ${source === 'ecobee' ? 'ecobee portal (unofficial)' : source} · ${new Date().toLocaleTimeString()}</div>`;
   };
-  try { await refresh(); } catch (e) { root.innerHTML = `<div class="ctl">Couldn't reach the thermostats (${e.message}).</div>`; return; }
+  // One-time "Connect ecobee" for accounts with SMS 2-step: relay texts the code, user types it here once.
+  const relay = d.climateRelay.replace(/\/$/, ''), key = encodeURIComponent(d.solarKey || d.climateKey);
+  const connectBox = (msg) => {
+    root.innerHTML = `<div class="ctl connect"><h3>Connect ecobee</h3><p class="muted">${msg}</p>
+      <div class="acts"><button id="cstart">Text me the code</button><input id="ccode" inputmode="numeric" placeholder="6-digit code from the text" maxlength="8"><button id="cfinish" class="primary">Connect</button></div><div class="msg" id="cmsg"></div></div>`;
+    const say = (t) => ($('#cmsg').textContent = t);
+    $('#cstart').onclick = async () => { say('Sending…'); try { const r = await (await fetch(`${relay}/connect/start?k=${key}`)).json(); say(r.error ? r.error : r.sent ? `Code sent to ${r.to}. Type it below.` : r.note || 'Done'); if (r.connected) climatePanel(d, root); } catch (e) { say(e.message); } };
+    $('#cfinish').onclick = async () => { say('Checking…'); try { const r = await (await fetch(`${relay}/connect/finish?k=${key}&code=${encodeURIComponent($('#ccode').value)}`)).json(); if (r.error) return say(r.error); say(r.refreshToken ? 'Connected — the relay will stay signed in.' : 'Connected for now (no refresh token; may need re-connecting later).'); setTimeout(() => climatePanel(d, root), 1200); } catch (e) { say(e.message); } };
+  };
+  try { await refresh(); } catch (e) {
+    if (/2-step|Connect ecobee|mfa/i.test(e.message)) return connectBox('Your ecobee account uses SMS 2-step verification. Send the code once and the relay stays signed in.');
+    root.innerHTML = `<div class="ctl">Couldn't reach the thermostats (${e.message}).</div>`; return;
+  }
   climateTimer = setInterval(() => { if ($('#viewer').classList.contains('hidden')) return clearInterval(climateTimer); refresh().catch(() => {}); }, 30000);
 }
 

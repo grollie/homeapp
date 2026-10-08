@@ -32,7 +32,12 @@ export default {
     try {
       if (url.pathname === '/thermostats') return Response.json({ at: new Date().toISOString(), source: 'ecobee', thermostats: await thermostats(env) }, { headers: cors });
       if (url.pathname === '/raw') return Response.json(await api(env, url.searchParams.get('path') || '/thermostat', url.searchParams.get('json')), { headers: cors });
-      if (url.pathname === '/logout') { await env.STATE.delete('ecobee:token'); return Response.json({ ok: true }, { headers: cors }); }
+      if (url.pathname === '/logout') { await env.STATE.delete('ecobee:token'); await env.STATE.delete('ecobee:refresh'); return Response.json({ ok: true }, { headers: cors }); }
+      // One-time connect for SMS 2-step: /connect/start sends the text, /connect/finish?code=123456 completes it
+      // and stores the refresh token so the relay never has to ask again.
+      if (url.pathname === '/connect/start') return Response.json(await smsStart(env), { headers: cors });
+      if (url.pathname === '/connect/finish') return Response.json(await smsFinish(env, url.searchParams.get('code')), { headers: cors });
+      if (url.pathname === '/connect/status') { const rt = await env.STATE.get('ecobee:refresh'); const tk = await env.STATE.get('ecobee:token', 'json'); return Response.json({ connected: !!rt, tokenUntil: tk ? new Date(tk.exp).toISOString() : null }, { headers: cors }); }
       return new Response('Not found', { status: 404, headers: cors });
     } catch (e) {
       return Response.json({ error: e.message }, { status: 502, headers: cors });
@@ -40,32 +45,66 @@ export default {
   },
 };
 
-// ---- auth: password grant, token cached in KV until shortly before it expires ----
+// ---- auth ----
+// Order: cached access token → refresh token (stored after the one-time SMS connect) → password grant
+// (which succeeds outright only if the account has no 2-step, or answers TOTP from ECOBEE_TOTP).
+const SCOPE = 'openid offline_access smartRead smartWrite piiRead';
+const post = (body) => fetch(AUTH, { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': UA }, body: JSON.stringify(body) });
+async function saveToken(env, j) {
+  await env.STATE.put('ecobee:token', JSON.stringify({ access_token: j.access_token, exp: Date.now() + ((j.expires_in || 3600) - 120) * 1000 }));
+  if (j.refresh_token) await env.STATE.put('ecobee:refresh', j.refresh_token);
+  return j.access_token;
+}
 async function token(env, force = false) {
   const cached = !force && (await env.STATE.get('ecobee:token', 'json'));
   if (cached && Date.now() < cached.exp) return cached.access_token;
+  const refresh = await env.STATE.get('ecobee:refresh');
+  if (refresh) {
+    const r = await post({ grant_type: 'refresh_token', client_id: CLIENT_ID, refresh_token: refresh });
+    const j = await r.json();
+    if (r.ok && j.access_token) return saveToken(env, j);
+    await env.STATE.delete('ecobee:refresh');                  // refresh token revoked/expired → fall through
+  }
   if (!env.ECOBEE_USER || !env.ECOBEE_PASSWORD) throw new Error('ECOBEE_USER / ECOBEE_PASSWORD not set');
-  const r = await fetch(AUTH, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
-    body: JSON.stringify({ grant_type: 'password', client_id: CLIENT_ID, audience: AUDIENCE, scope: 'openid smartRead smartWrite piiRead',
-      username: env.ECOBEE_USER, password: env.ECOBEE_PASSWORD }),
-  });
+  const r = await post({ grant_type: 'password', client_id: CLIENT_ID, audience: AUDIENCE, scope: SCOPE, username: env.ECOBEE_USER, password: env.ECOBEE_PASSWORD });
   let j = await r.json();
+  if (j.error === 'mfa_required' && !env.ECOBEE_TOTP) throw new Error('ecobee: 2-step verification is on — open the Thermostats tile and use "Connect ecobee" to enter the SMS code once');
   // Account has 2-step verification: answer Auth0's MFA challenge with a TOTP code from ECOBEE_TOTP (the
   // authenticator "setup key"), exactly as the phone app would.
   if (j.error === 'mfa_required' && j.mfa_token) {
     if (!env.ECOBEE_TOTP) throw new Error('ecobee login: 2-step verification is on but ECOBEE_TOTP is not set');
-    const r2 = await fetch(AUTH, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
-      body: JSON.stringify({ grant_type: 'http://auth0.com/oauth/grant-type/mfa-otp', client_id: CLIENT_ID, mfa_token: j.mfa_token, otp: await totp(env.ECOBEE_TOTP) }),
-    });
+    const r2 = await post({ grant_type: 'http://auth0.com/oauth/grant-type/mfa-otp', client_id: CLIENT_ID, mfa_token: j.mfa_token, otp: await totp(env.ECOBEE_TOTP) });
     j = await r2.json();
     if (!r2.ok || !j.access_token) throw new Error(`ecobee MFA: ${j.error_description || j.error || r2.status}`);
   } else if (!r.ok || !j.access_token) throw new Error(`ecobee login: ${j.error_description || j.error || r.status}`);
-  await env.STATE.put('ecobee:token', JSON.stringify({ access_token: j.access_token, exp: Date.now() + ((j.expires_in || 3600) - 120) * 1000 }));
-  return j.access_token;
+  return saveToken(env, j);
+}
+
+// ---- SMS 2-step: start = password grant → mfa_token → ask Auth0 to text the code; finish = exchange the code ----
+async function smsStart(env) {
+  if (!env.ECOBEE_USER || !env.ECOBEE_PASSWORD) throw new Error('ECOBEE_USER / ECOBEE_PASSWORD not set');
+  const r = await post({ grant_type: 'password', client_id: CLIENT_ID, audience: AUDIENCE, scope: SCOPE, username: env.ECOBEE_USER, password: env.ECOBEE_PASSWORD });
+  const j = await r.json();
+  if (j.access_token) { await saveToken(env, j); return { sent: false, connected: true, note: 'No 2-step challenge — already signed in.' }; }
+  if (j.error !== 'mfa_required') throw new Error(`ecobee login: ${j.error_description || j.error}`);
+  const auths = await (await fetch('https://auth.ecobee.com/mfa/authenticators', { headers: { Authorization: 'Bearer ' + j.mfa_token, 'User-Agent': UA } })).json();
+  const sms = (Array.isArray(auths) ? auths : []).find((a) => a.oob_channel === 'sms' && a.active) || (Array.isArray(auths) ? auths[0] : null);
+  const cr = await fetch('https://auth.ecobee.com/mfa/challenge', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
+    body: JSON.stringify({ mfa_token: j.mfa_token, client_id: CLIENT_ID, challenge_type: 'oob', authenticator_id: sms?.id }) });
+  const ch = await cr.json();
+  if (!cr.ok || !ch.oob_code) throw new Error(`ecobee MFA challenge: ${ch.error_description || ch.error || cr.status}`);
+  await env.STATE.put('ecobee:mfa', JSON.stringify({ mfa_token: j.mfa_token, oob_code: ch.oob_code }), { expirationTtl: 600 });
+  return { sent: true, to: sms?.name || 'your phone', authenticators: (Array.isArray(auths) ? auths : []).map((a) => `${a.authenticator_type}/${a.oob_channel || ''} ${a.name || ''}`.trim()) };
+}
+async function smsFinish(env, code) {
+  const m = await env.STATE.get('ecobee:mfa', 'json');
+  if (!m) throw new Error('No SMS challenge pending — start again');
+  if (!code) throw new Error('code missing');
+  const r = await post({ grant_type: 'http://auth0.com/oauth/grant-type/mfa-oob', client_id: CLIENT_ID, mfa_token: m.mfa_token, oob_code: m.oob_code, binding_code: String(code).trim() });
+  const j = await r.json();
+  if (!r.ok || !j.access_token) throw new Error(`ecobee MFA: ${j.error_description || j.error || r.status}`);
+  await saveToken(env, j); await env.STATE.delete('ecobee:mfa');
+  return { connected: true, refreshToken: !!j.refresh_token, expiresIn: j.expires_in };
 }
 
 // RFC 6238 TOTP (SHA-1, 6 digits, 30 s) from a base32 setup key, via WebCrypto.
