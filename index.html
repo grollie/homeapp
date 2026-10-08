@@ -80,6 +80,8 @@ h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--
 .bchip.mid i{background:var(--accent)}.bchip.low i{background:var(--danger)}
 .bchip b{position:relative;font-size:15px}.bchip small{position:relative;color:var(--muted);font-size:11px}
 .bchip.off{opacity:.45}
+.bchip.odd{border-color:var(--danger)}
+.bsum{align-self:center;font-size:12px;color:var(--muted);padding-left:4px}
 @media (max-width:480px){.grid{grid-template-columns:repeat(2,1fr)}.tile{min-height:96px;padding:12px}}
 </style>
 </head>
@@ -232,17 +234,34 @@ async function solarPanel(d, root) {
 
   // Smart Life (Tuya) batteries, shown as a compact strip under the site they belong to.
   // d.batteries maps site name -> list of device ids or name fragments; unmatched ones go in a "Batteries" strip at the bottom.
-  const socOf = (st) => { for (const k of ['soc', 'battery_percentage', 'residual_electricity', 'battery_state_of_charge', 'percent', 'battery']) { const v = +st[k]; if (k in st && v >= 0 && v <= 100) return v; } for (const [k, v] of Object.entries(st)) if (/soc|percent|residual/i.test(k) && +v >= 0 && +v <= 100) return +v; return null; };
-  const chip = (b) => { const soc = socOf(b.status); const cls = soc == null ? '' : soc < 20 ? ' low' : soc < 50 ? ' mid' : ' ok'; return `<span class="bchip${b.online ? '' : ' off'}${cls}" title="${b.name}${b.online ? '' : ' (offline)'}"><i style="width:${soc ?? 0}%"></i><b>${soc == null ? '—' : soc + '%'}</b><small>${b.name.replace(/battery/i, '').trim() || b.name}</small></span>`; };
+  const kWs = (w) => (Math.abs(w) >= 1000 ? (w / 1000).toFixed(2) + ' kW' : Math.round(w) + ' W');
+  // One chip per battery: fill bar = SOC. Label is its position in the group (B1…), tooltip has the Smart Life name.
+  // "?" marks a battery whose SOC or voltage disagrees with the rest of its group (wrong grouping or a sick pack).
+  const chip = (b, i, group) => {
+    const soc = b.soc ?? null, cls = soc == null ? '' : soc < 20 ? ' low' : soc < 50 ? ' mid' : ' ok';
+    const med = (arr) => { const s = arr.filter((x) => x != null).sort((a, c) => a - c); return s.length ? s[Math.floor(s.length / 2)] : null; };
+    const odd = b.online && group.length > 1 && (Math.abs(soc - med(group.map((x) => x.soc))) >= 3 || Math.abs(b.volts - med(group.map((x) => x.volts))) >= 0.3);
+    const tip = `${b.name}${b.online ? '' : ' (offline)'}${b.error ? ' — ' + b.error : ''}\n${b.volts ?? '—'} V · ${b.amps ?? '—'} A · ${kWs(b.watts || 0)} ${b.watts > 0 ? 'charging' : 'discharging'}\nhealth ${b.soh ?? '—'}% · ${b.cycles ?? '—'} cycles · ${b.temp ?? '—'} °C${odd ? '\n⚠ reading differs from the rest of this group' : ''}`;
+    return `<span class="bchip${b.online ? '' : ' off'}${cls}${odd ? ' odd' : ''}" title="${tip.replace(/"/g, '&quot;')}"><i style="width:${soc ?? 0}%"></i><b>${soc == null ? '—' : soc + '%'}</b><small>B${i + 1}${odd ? ' ?' : ''}</small></span>`;
+  };
+  const strip = (bats) => {
+    if (!bats.length) return '';
+    const w = bats.reduce((a, b) => a + (b.watts || 0), 0), socs = bats.filter((b) => b.soc != null);
+    const avg = socs.length ? socs.reduce((a, b) => a + b.soc, 0) / socs.length : null;
+    return bats.map((b, i) => chip(b, i, bats)).join('') + `<span class="bsum">${bats.length} packs · ${avg == null ? '—' : avg.toFixed(0) + '%'} · ${kWs(Math.abs(w))} ${w >= 0 ? 'in' : 'out'}</span>`;
+  };
   const fetchBatteries = async () => {
     if (!d.tuyaRelay) return null;
     const r = await fetch(`${d.tuyaRelay.replace(/\/$/, '')}/devices?k=${encodeURIComponent(key)}`);
     if (!r.ok) return null;
     return (await r.json()).devices || [];
   };
+  // d.batteries: { "<site name>": [device ids or name fragments] }. Ids keep the order given, so B1…Bn are stable.
+  const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
   const forSite = (bats, site) => {
     const want = (d.batteries || {})[site.name] || (d.batteries || {})[site.description] || [];
-    return bats.filter((b) => want.some((w) => b.id === w || b.name.toLowerCase().includes(String(w).toLowerCase())) || (!want.length && site.description && b.name.toLowerCase().includes(site.description.toLowerCase())));
+    if (want.length) return want.map((w) => bats.find((b) => b.id === w) || bats.find((b) => norm(b.name).includes(norm(w)))).filter(Boolean);
+    return site.description ? bats.filter((b) => norm(b.name).includes(norm(site.description))) : [];
   };
 
   const refresh = async () => {
@@ -257,9 +276,9 @@ async function solarPanel(d, root) {
     }
     if (bats) {
       const used = new Set();
-      sites.forEach((s, i) => { const mine = forSite(bats, s); mine.forEach((b) => used.add(b.id)); root.querySelectorAll('.ctl.site .bstrip')[i].innerHTML = mine.map(chip).join(''); });
+      sites.forEach((s, i) => { const mine = forSite(bats, s); mine.forEach((b) => used.add(b.id)); root.querySelectorAll('.ctl.site .bstrip')[i].innerHTML = strip(mine); });
       const rest = bats.filter((b) => !used.has(b.id));
-      const ex = root.querySelector('.ctl.extra'); ex.classList.toggle('hidden', !rest.length); ex.querySelector('.bstrip').innerHTML = rest.map(chip).join('');
+      const ex = root.querySelector('.ctl.extra'); ex.classList.toggle('hidden', !rest.length); ex.querySelector('.bstrip').innerHTML = strip(rest);
     }
     const tot = { pv: 0, load: 0, grid: 0, batt: 0, soc: [] };
     sites.forEach((s, i) => {

@@ -22,11 +22,17 @@ export default {
     if (!env.RELAY_KEY || url.searchParams.get('k') !== env.RELAY_KEY) return new Response('Unauthorized', { status: 401, headers: cors });
     try {
       if (url.pathname === '/devices') {
-        const list = await tuya(env, '/v2.0/cloud/thing/device?page_size=20');
-        const devices = await Promise.all((list || []).map(async (d) => {
-          const st = await tuya(env, `/v1.0/iot-03/devices/${d.id}/status`).catch(() => []);
-          return { id: d.id, name: d.custom_name || d.name, product: d.product_name, category: d.category, online: d.is_online,
-            status: Object.fromEntries((st || []).map((s) => [s.code, s.value])) };
+        const list = await devicesList(env);
+        const devices = await Promise.all(list.map(async (d) => {
+          try {
+            const sh = await tuya(env, `/v2.0/cloud/thing/${d.id}/shadow/properties`);
+            const p = Object.fromEntries((sh.properties || []).map((x) => [x.code, x.value]));
+            // SmartLi "EOS" packs: voltages/currents ×100, temps ×10, capacities in 10 mAh, remain_time in minutes
+            const v = p.pack_voltage / 100, a = p.pack_current / 100;
+            return { id: d.id, name: d.name, online: d.online, soc: p.soc, soh: p.soh, volts: v, amps: a, watts: Math.round(v * a),
+              temp: p.cell_temp / 10, cycles: p.cycle_counts, remainMin: p.remain_time, capAh: p.full_cap / 100, remainAh: p.remain_cap / 100,
+              warning: p.warning_flag || 0, protection: p.protections_fag || 0 };
+          } catch (e) { return { id: d.id, name: d.name, online: false, error: e.message }; }
         }));
         return Response.json({ at: new Date().toISOString(), devices }, { headers: cors });
       }
@@ -39,6 +45,19 @@ export default {
     }
   },
 };
+
+// Device list with real names (the list endpoint only has product-ish names); cached 10 min.
+let listCache = { at: 0, list: [] };
+async function devicesList(env) {
+  if (listCache.list.length && Date.now() - listCache.at < 6e5) return listCache.list;
+  const raw = (await tuya(env, '/v2.0/cloud/thing/device?page_size=20')) || [];
+  const list = await Promise.all(raw.map(async (d) => {
+    const det = await tuya(env, `/v1.0/iot-03/devices/${d.id}`).catch(() => ({}));
+    return { id: d.id, name: det.name || d.custom_name || d.name, online: det.online ?? d.is_online };
+  }));
+  listCache = { at: Date.now(), list };
+  return list;
+}
 
 const enc = new TextEncoder();
 const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
