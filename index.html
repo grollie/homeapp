@@ -47,6 +47,9 @@ h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--
 #vnote{padding:14px 16px;font-size:14px;color:var(--muted);background:var(--panel);border-bottom:1px solid var(--line)}
 #vcreds{padding:10px 16px;font-size:14px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;gap:16px;flex-wrap:wrap;align-items:center}
 #vcreds code{background:var(--bg);padding:2px 6px;border-radius:4px;user-select:all}
+#vcreds code.masked{cursor:pointer;letter-spacing:1px;user-select:none}
+#vcreds code.masked.shown{user-select:all;letter-spacing:0}
+#vcreds span .btn.small{margin-left:4px;padding:2px 8px;font-size:12px}
 #vcreds .rot{color:var(--muted);font-size:13px}#vcreds .rot.due{color:var(--danger);font-weight:600}
 .btn.small{padding:5px 10px;font-size:13px}
 #pwform{flex-basis:100%;display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-top:8px;border-top:1px solid var(--line)}
@@ -188,7 +191,17 @@ function openDevice(d) {
     creds.classList.remove('hidden');
     creds.innerHTML = `<span>Login for this device:</span>`;
     for (const [k, v] of Object.entries(d.login)) {
-      const s = document.createElement('span'); s.innerHTML = `${k}: <code></code>`; s.querySelector('code').textContent = v; creds.appendChild(s);
+      const secret = /pass|token|secret|key|pin/i.test(k);
+      const s = document.createElement('span'); s.innerHTML = `${k}: <code></code>`;
+      const code = s.querySelector('code');
+      if (secret) {
+        code.textContent = '••••••••'; code.className = 'masked'; code.title = 'Click to show';
+        code.onclick = () => { const on = code.classList.toggle('shown'); code.textContent = on ? v : '••••••••'; code.title = on ? 'Click to hide' : 'Click to show'; };
+        const cp = document.createElement('button'); cp.className = 'btn small'; cp.textContent = 'Copy'; cp.title = `Copy ${k}`;
+        cp.onclick = () => navigator.clipboard.writeText(v).then(() => { cp.textContent = 'Copied'; setTimeout(() => (cp.textContent = 'Copy'), 1500); });
+        s.appendChild(cp);
+      } else code.textContent = v;
+      creds.appendChild(s);
     }
     if (d.rotateDays) {
       const due = (d.loginUpdated || 0) + d.rotateDays * 864e5, left = Math.ceil((due - Date.now()) / 864e5);
@@ -320,7 +333,7 @@ async function solarPanel(d, root) {
 function updatePassword(d) {
   const f = $('#pwform'); f.classList.toggle('hidden');
   if (!f.classList.contains('hidden') && !f.innerHTML) {
-    f.innerHTML = `<input id="npw" placeholder="New password" autocomplete="off"><input id="ntok" type="password" placeholder="GitHub token (to publish)" autocomplete="off"><button class="btn small primary" id="npub">Save &amp; publish</button><button class="btn small" id="ndl">Save &amp; download</button><span class="msg" id="nmsg"></span>`;
+    f.innerHTML = `<input id="npw" type="password" placeholder="New password" autocomplete="new-password"><input id="ntok" type="password" placeholder="GitHub token (to publish)" autocomplete="off"><button class="btn small primary" id="npub">Save &amp; publish</button><button class="btn small" id="ndl">Save &amp; download</button><span class="msg" id="nmsg"></span>`;
     const save = async (publish) => {
       const pw = $('#npw').value, msg = $('#nmsg'); msg.textContent = '';
       if (!pw) return (msg.textContent = 'Type the new password first.');

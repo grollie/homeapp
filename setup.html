@@ -117,7 +117,8 @@ function renderDevices() {
     del.onclick = () => { devices.splice(i, 1); renderDevices(); };
     box.appendChild(r);
     const l = document.createElement('div'); l.className = 'row login';
-    l.innerHTML = `<input placeholder="Device username (optional)" autocomplete="off"><input placeholder="Device password (optional)" autocomplete="off"><input placeholder="Note (optional)"><input placeholder="API key (Rachio or Solar Assistant)" autocomplete="off"><input type="number" min="0" placeholder="Password expires every N days (optional)">`;
+    l.innerHTML = `<input placeholder="Device username (optional)" autocomplete="off"><input type="password" placeholder="Device password (optional)" autocomplete="new-password" title="Double-click to show"><input placeholder="Note (optional)"><input type="password" placeholder="API key (Rachio or Solar Assistant)" autocomplete="off" title="Double-click to show"><input type="number" min="0" placeholder="Password expires every N days (optional)">`;
+    for (const inp of l.querySelectorAll('input[type=password]')) inp.ondblclick = () => (inp.type = inp.type === 'password' ? 'text' : 'password');
     const [lu, lp, ln, lk, lr] = l.children;
     const keyField = d.solarKey !== undefined || /solar/i.test(d.name) ? 'solarKey' : 'rachioKey';
     lu.value = d.login?.username || ''; lp.value = d.login?.password || ''; ln.value = d.note || ''; lk.value = d[keyField] || ''; lr.value = d.rotateDays || '';
