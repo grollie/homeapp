@@ -2,7 +2,7 @@
 
 One password-protected page for every smart device in the house: Solar Assistant (×2),
 Smart Life batteries, Starlink, Ecobee, Nest, myQ garage doors, First Alert,
-FortiRecorder, FortiCamera Cloud, Rachio, Whisker and Matic.
+FortiRecorder (×2), FortiCamera Cloud, Rachio, Whisker and Matic.
 
 Hosted free on GitHub Pages. Each family member has their own name + password.
 
@@ -36,7 +36,7 @@ your `vault.js` and your own login, make changes, download and commit again.
 
 | Device | Inside the page? | Why |
 |---|---|---|
-| Solar Assistant ×2, FortiRecorder | Yes (on home Wi-Fi / VPN) | Local web pages |
+| Solar Assistant ×2, FortiRecorder ×2 | Yes (on home Wi-Fi / VPN) | Local web pages |
 | Ecobee, Nest, Rachio, Starlink, FortiCamera Cloud, Smart Life | New tab | Those sites block being embedded |
 | myQ, First Alert, Whisker, Matic | App only | No web portal exists; tile links to the vendor site |
 
