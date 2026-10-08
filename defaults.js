@@ -24,4 +24,6 @@ window.HH_DEFAULT_DEVICES = [
     note: 'Feeder-Robot is app-only. Open the Whisker app on your phone.' },
   { icon: '🤖', name: 'Matic', sub: 'Robot vacuum', url: 'https://maticrobots.com', group: 'Robots', app: true,
     note: 'Matic is app-only. Open the Matic app on your phone.' },
+  { icon: '🔑', name: 'Google Password Manager', sub: 'All device logins', url: 'https://passwords.google.com/', group: 'Accounts', embed: false,
+    note: 'Every device login is saved in Google Password Manager. Chrome fills them in automatically when you open a device; use this to look one up or share it with the family.' },
 ];

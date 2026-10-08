@@ -45,3 +45,11 @@ Local devices only load when you're on the home network or connected to the home
 ## Local testing
 
 `powershell -File serve.ps1` then open <http://localhost:8787>.
+
+## Device logins via Google Password Manager
+
+Each device's own username/password is kept in [Google Password Manager](https://passwords.google.com/),
+not in this site. Chrome fills them in automatically when a device is opened (as long as you're
+signed into Chrome with your Google account). The dashboard has a Google Password Manager tile and a
+🔑 Passwords button on every device for quick look-ups. To give family members access to the same
+logins, share them from Google Password Manager (Share → family group).
