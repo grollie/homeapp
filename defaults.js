@@ -6,8 +6,6 @@ window.HH_DEFAULT_DEVICES = [
   // In setup, put the worker URL in "solarRelay" and the RELAY_KEY in the API key field.
   { icon: '☀️', name: 'Solar Assistant', sub: 'Both systems · live', url: 'https://3rd-rail.us.solar-assistant.io/', group: 'Power',
     solarRelay: 'https://solar-relay.garyrollie.workers.dev' },
-  { icon: '🔋', name: 'Batteries (8)', sub: 'Smart Life', url: 'https://ipc.ismartlife.me/', group: 'Power', embed: false,
-    note: 'The 8 batteries are managed in the Smart Life app. This is the Smart Life web login.' },
   { icon: '🛰️', name: 'Starlink', sub: 'Dish & account', url: 'http://192.168.100.1', group: 'Network', embed: false,
     note: 'Dish status page on the local network. Account/billing: https://www.starlink.com/account' },
   { icon: '🌡️', name: 'Ecobee', sub: 'Thermostat', url: 'https://www.ecobee.com/consumerportal/index.html', group: 'Home', embed: false },
