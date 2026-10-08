@@ -47,6 +47,11 @@ h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--
 #vnote{padding:14px 16px;font-size:14px;color:var(--muted);background:var(--panel);border-bottom:1px solid var(--line)}
 #vcreds{padding:10px 16px;font-size:14px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;gap:16px;flex-wrap:wrap;align-items:center}
 #vcreds code{background:var(--bg);padding:2px 6px;border-radius:4px;user-select:all}
+#vcreds .rot{color:var(--muted);font-size:13px}#vcreds .rot.due{color:var(--danger);font-weight:600}
+.btn.small{padding:5px 10px;font-size:13px}
+#pwform{flex-basis:100%;display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-top:8px;border-top:1px solid var(--line)}
+#pwform input{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);min-width:180px}
+#pwform .msg{font-size:13px;color:var(--muted)}
 #vlive{flex:1;overflow:auto;padding:16px;max-width:900px;width:100%;margin:0 auto}
 .ctl{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px;box-shadow:var(--shadow)}
 .ctl h3{margin:0 0 2px;font-size:17px;display:flex;align-items:center;gap:8px}
@@ -170,6 +175,14 @@ function openDevice(d) {
     for (const [k, v] of Object.entries(d.login)) {
       const s = document.createElement('span'); s.innerHTML = `${k}: <code></code>`; s.querySelector('code').textContent = v; creds.appendChild(s);
     }
+    if (d.rotateDays) {
+      const due = (d.loginUpdated || 0) + d.rotateDays * 864e5, left = Math.ceil((due - Date.now()) / 864e5);
+      const s = document.createElement('span'); s.className = 'rot' + (left <= 3 ? ' due' : '');
+      s.textContent = d.loginUpdated ? (left < 0 ? `Password expired ${-left} days ago` : left === 0 ? 'Password expires today' : `Password expires in ${left} days`) + ` (changes every ${d.rotateDays} days)` : `Password changes every ${d.rotateDays} days`;
+      creds.appendChild(s);
+    }
+    const b = document.createElement('button'); b.className = 'btn small'; b.textContent = 'Update password'; b.onclick = () => updatePassword(d); creds.appendChild(b);
+    const form = document.createElement('div'); form.id = 'pwform'; form.className = 'hidden'; creds.appendChild(form);
   } else creds.classList.add('hidden');
   const note = $('#vnote');
   if (d.app) {
@@ -184,9 +197,35 @@ function openDevice(d) {
   else if (d.url && !d.app && d.embed !== false) { live.classList.add('hidden'); f.classList.remove('hidden'); f.src = d.url; }
   else { live.classList.add('hidden'); f.classList.add('hidden'); f.src = 'about:blank'; }
   $('#viewer').classList.remove('hidden');
-  history.pushState({ v: 1 }, '', '#' + encodeURIComponent(d.name));
+  const hash = '#' + encodeURIComponent(d.name);
+  if (location.hash !== hash) history.pushState({ v: 1 }, '', hash);
 }
 function closeViewer() { $('#viewer').classList.add('hidden'); $('#frame').src = 'about:blank'; $('#vlive').innerHTML = ''; }
+
+// ---- Change a device password from the page and save it to the vault ----
+function updatePassword(d) {
+  const f = $('#pwform'); f.classList.toggle('hidden');
+  if (!f.classList.contains('hidden') && !f.innerHTML) {
+    f.innerHTML = `<input id="npw" placeholder="New password" autocomplete="off"><input id="ntok" type="password" placeholder="GitHub token (to publish)" autocomplete="off"><button class="btn small primary" id="npub">Save &amp; publish</button><button class="btn small" id="ndl">Save &amp; download</button><span class="msg" id="nmsg"></span>`;
+    const save = async (publish) => {
+      const pw = $('#npw').value, msg = $('#nmsg'); msg.textContent = '';
+      if (!pw) return (msg.textContent = 'Type the new password first.');
+      const token = $('#ntok').value.trim();
+      if (publish && !token) return (msg.textContent = 'Paste a GitHub token, or use Save & download.');
+      try {
+        d.login.password = pw; d.loginUpdated = Date.now();
+        const out = { v: vault.v, users: vault.users, data: await HH.writeData(rawKey, data) };
+        const text = HH.vaultText(out);
+        if (publish) { await HH.publishToGitHub(HH.REPO, token, text, `Update ${d.name} password`); msg.textContent = 'Saved. The site updates in a minute or two.'; }
+        else { HH.download(text); msg.textContent = 'Downloaded vault.js — commit it to the homeapp repo.'; }
+        window.HH_VAULT.data = out.data;     // keep this tab consistent until the site redeploys
+        openDevice(d);
+      } catch (e) { msg.textContent = e.message || e; }
+      $('#ntok').value = '';
+    };
+    $('#npub').onclick = () => save(true); $('#ndl').onclick = () => save(false);
+  }
+}
 
 // ---- Rachio live panel (public API, called straight from the browser) ----
 async function rachioPanel(key, root) {

@@ -54,3 +54,10 @@ not in this site. Chrome fills them in automatically when a device is opened (as
 signed into Chrome with your Google account). The dashboard has a Google Password Manager tile and a
 🔑 Passwords button on every device for quick look-ups. To give family members access to the same
 logins, share them from Google Password Manager (Share → family group).
+
+## Passwords that expire
+
+For a device whose password changes on a schedule (FortiCamera Cloud: every 42 days), the tile shows
+"Password expires in N days" and turns red when it's due. Click **Update password** on the tile, type the
+new one, and either **Save & publish** (with a GitHub token) or **Save & download** then commit `vault.js`.
+Set the schedule in setup.html ("Password expires every N days").

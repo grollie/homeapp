@@ -22,7 +22,7 @@ button.del{color:var(--danger)}
 .row{display:grid;gap:8px;grid-template-columns:1fr 1fr;margin-bottom:8px}
 .row.dev{grid-template-columns:48px 1.2fr 2fr 1fr auto;align-items:center}
 .row.user{grid-template-columns:1fr 1fr auto;align-items:center}
-.row.login{grid-template-columns:1fr 1fr 1fr 1fr;margin:0 0 8px 56px}
+.row.login{grid-template-columns:1fr 1fr 1fr 1fr 1fr;margin:0 0 8px 56px}
 small{color:var(--muted)}
 .err{color:var(--danger)}.ok{color:#2e8b57}
 @media (max-width:640px){.row,.row.dev,.row.user,.row.login{grid-template-columns:1fr;margin-left:0}}
@@ -71,7 +71,6 @@ small{color:var(--muted)}
 <script src="vault.js"></script>
 <script>
 const $ = (s) => document.querySelector(s);
-const REPO = 'grollie/homeapp';
 let devices = structuredClone(window.HH_DEFAULT_DEVICES);
 let users = [{ name: '', pw: '' }];        // {name, pw, existing?:wrappedEntry}
 let loaded = null;                         // existing vault + rawKey when editing
@@ -118,11 +117,12 @@ function renderDevices() {
     del.onclick = () => { devices.splice(i, 1); renderDevices(); };
     box.appendChild(r);
     const l = document.createElement('div'); l.className = 'row login';
-    l.innerHTML = `<input placeholder="Device username (optional)" autocomplete="off"><input placeholder="Device password (optional)" autocomplete="off"><input placeholder="Note (optional)"><input placeholder="Rachio API key (Rachio only)" autocomplete="off">`;
-    const [lu, lp, ln, lk] = l.children;
-    lu.value = d.login?.username || ''; lp.value = d.login?.password || ''; ln.value = d.note || ''; lk.value = d.rachioKey || '';
+    l.innerHTML = `<input placeholder="Device username (optional)" autocomplete="off"><input placeholder="Device password (optional)" autocomplete="off"><input placeholder="Note (optional)"><input placeholder="Rachio API key (Rachio only)" autocomplete="off"><input type="number" min="0" placeholder="Password expires every N days (optional)">`;
+    const [lu, lp, ln, lk, lr] = l.children;
+    lu.value = d.login?.username || ''; lp.value = d.login?.password || ''; ln.value = d.note || ''; lk.value = d.rachioKey || ''; lr.value = d.rotateDays || '';
     const setLogin = () => { const o = {}; if (lu.value) o.username = lu.value; if (lp.value) o.password = lp.value; d.login = Object.keys(o).length ? o : undefined; };
-    lu.oninput = setLogin; lp.oninput = setLogin; ln.oninput = () => (d.note = ln.value || undefined); lk.oninput = () => (d.rachioKey = lk.value.trim() || undefined);
+    lu.oninput = setLogin; lp.oninput = () => { setLogin(); d.loginUpdated = Date.now(); }; ln.oninput = () => (d.note = ln.value || undefined);
+    lk.oninput = () => (d.rachioKey = lk.value.trim() || undefined); lr.oninput = () => (d.rotateDays = +lr.value || undefined);
     box.appendChild(l);
   });
 }
@@ -156,14 +156,13 @@ async function buildVault() {
     const id = await HH.userId(u.name);
     out.users[id] = u.pw ? { name: u.name.trim(), ...(await HH.wrapFor(rawKey, u.pw)) } : u.existing;
   }
-  return 'window.HH_VAULT = ' + JSON.stringify(out, null, 1) + ';\n';
+  return HH.vaultText(out);
 }
 
 $('#build').onclick = async () => {
   const msg = $('#bmsg'); msg.textContent = '';
   try {
-    const blob = new Blob([await buildVault()], { type: 'text/javascript' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'vault.js'; a.click();
+    HH.download(await buildVault());
     msg.innerHTML = '<span class="ok">Downloaded vault.js — commit it to the homeapp repo.</span>';
   } catch (e) { msg.innerHTML = `<span class="err">${e}</span>`; }
 };
@@ -173,17 +172,9 @@ $('#publish').onclick = async () => {
   const token = $('#ghtoken').value.trim();
   if (!token) return (msg.innerHTML = '<span class="err">Paste a GitHub token first.</span>');
   try {
-    const text = await buildVault();
-    const api = `https://api.github.com/repos/${REPO}/contents/vault.js`;
-    const headers = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' };
-    const cur = await fetch(api, { headers });
-    const sha = cur.ok ? (await cur.json()).sha : undefined;
-    const bytes = new TextEncoder().encode(text);
-    const content = btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(''));
-    const r = await fetch(api, { method: 'PUT', headers, body: JSON.stringify({ message: 'Update vault.js from setup page', content, sha }) });
-    if (!r.ok) throw `GitHub said ${r.status}: ${(await r.json()).message || ''}`;
+    await HH.publishToGitHub(HH.REPO, token, await buildVault(), 'Update vault.js from setup page');
     msg.innerHTML = '<span class="ok">Published. The site updates in a minute or two.</span>';
-  } catch (e) { msg.innerHTML = `<span class="err">${e}</span>`; }
+  } catch (e) { msg.innerHTML = `<span class="err">${e.message || e}</span>`; }
   $('#ghtoken').value = '';
 };
 </script>

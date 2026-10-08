@@ -50,5 +50,25 @@ const HH = (() => {
     return seal(await aesKey(rawKey), enc.encode(JSON.stringify(data)));
   }
 
-  return { b64, unb64, rand, userId, unlockKey, readData, wrapFor, writeData };
+  // vault object -> the text of vault.js
+  const vaultText = (v) => 'window.HH_VAULT = ' + JSON.stringify(v, null, 1) + ';\n';
+
+  // Commit vault.js to GitHub with a fine-grained token (Contents: read & write).
+  async function publishToGitHub(repo, token, text, message = 'Update vault.js') {
+    const api = `https://api.github.com/repos/${repo}/contents/vault.js`;
+    const headers = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' };
+    const cur = await fetch(api, { headers });
+    const sha = cur.ok ? (await cur.json()).sha : undefined;
+    const bytes = enc.encode(text);
+    const content = btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(''));
+    const r = await fetch(api, { method: 'PUT', headers, body: JSON.stringify({ message, content, sha }) });
+    if (!r.ok) throw new Error(`GitHub said ${r.status}: ${(await r.json().catch(() => ({}))).message || ''}`);
+  }
+
+  const download = (text) => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/javascript' })); a.download = 'vault.js'; a.click();
+  };
+
+  return { b64, unb64, rand, userId, unlockKey, readData, wrapFor, writeData, vaultText, publishToGitHub, download, REPO: 'grollie/homeapp' };
 })();
