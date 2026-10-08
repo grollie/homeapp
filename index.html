@@ -67,6 +67,11 @@ h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--
 .ctl .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 .ctl .acts button{padding:7px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:14px}
 .ctl .msg{font-size:13px;margin-top:8px;color:var(--muted)}
+.ctl.sum{border-color:var(--accent)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:6px}
+.st{background:var(--bg);border-radius:10px;padding:10px 12px}
+.st .sv{font-size:20px;font-weight:600;line-height:1.2}.st .sl{font-size:12px;color:var(--muted)}
+.st.pv .sv{color:var(--accent)}.st.soc .sv{color:#2e8b57}
 @media (max-width:480px){.grid{grid-template-columns:repeat(2,1fr)}.tile{min-height:96px;padding:12px}}
 </style>
 </head>
@@ -193,7 +198,10 @@ function openDevice(d) {
     note.textContent = d.note || `${d.name} doesn't allow being shown inside another page. Use "Open in new tab".`;
   } else note.classList.add('hidden');
   const f = $('#frame'), live = $('#vlive'); live.innerHTML = '';
-  if (d.rachioKey) { live.classList.remove('hidden'); f.classList.add('hidden'); f.src = 'about:blank'; note.classList.add('hidden'); rachioPanel(d.rachioKey, live); }
+  if (d.rachioKey || d.solarKey) {
+    live.classList.remove('hidden'); f.classList.add('hidden'); f.src = 'about:blank'; note.classList.add('hidden');
+    if (d.rachioKey) rachioPanel(d.rachioKey, live); else solarPanel(d.solarKey, live);
+  }
   else if (d.url && !d.app && d.embed !== false) { live.classList.add('hidden'); f.classList.remove('hidden'); f.src = d.url; }
   else { live.classList.add('hidden'); f.classList.add('hidden'); f.src = 'about:blank'; }
   $('#viewer').classList.remove('hidden');
@@ -201,6 +209,48 @@ function openDevice(d) {
   if (location.hash !== hash) history.pushState({ v: 1 }, '', hash);
 }
 function closeViewer() { $('#viewer').classList.add('hidden'); $('#frame').src = 'about:blank'; $('#vlive').innerHTML = ''; }
+
+// ---- Solar Assistant merged panel (Cloud API: list sites -> per-site token -> metrics) ----
+let solarTimer = null;
+async function solarPanel(key, root) {
+  clearInterval(solarTimer);
+  const cloud = (path, method = 'GET') => fetch('https://solar-assistant.io/api/v1/' + path, { method, headers: { Authorization: 'Bearer ' + key } })
+    .then((r) => { if (!r.ok) throw new Error('Solar Assistant cloud ' + r.status); return r.json(); });
+  const kW = (w) => (Math.abs(w) >= 1000 ? (w / 1000).toFixed(2) + ' kW' : Math.round(w) + ' W');
+  root.innerHTML = '<div class="ctl">Connecting to Solar Assistant…</div>';
+  try {
+    const sites = await cloud('sites');
+    const auth = await Promise.all(sites.map((s) => cloud(`sites/${s.id}/authorize`, 'POST')));
+    const fetchMetrics = (a) => fetch(`https://${a.host}/api/v1/metrics`, { headers: { Authorization: 'Bearer ' + a.token, 'Site-Id': a.site_id, 'Site-Key': a.site_key } })
+      .then((r) => { if (!r.ok) throw new Error(a.site_name + ' ' + r.status); return r.json(); });
+    // Layout: one totals card for the whole property, then a card per Solar Assistant.
+    root.innerHTML = '<div class="ctl sum"><h3>☀️ Both systems</h3><div class="stats"></div></div>' +
+      auth.map((a) => `<div class="ctl site"><h3><span class="dot"></span><span>${a.site_name}</span></h3><div class="meta"></div><div class="stats"></div><div class="acts"><a class="btn small" target="_blank" rel="noopener" href="https://${a.host}/">Full dashboard ↗</a></div></div>`).join('');
+    const siteEls = [...root.querySelectorAll('.ctl.site')];
+    const stat = (label, val, cls = '') => `<div class="st ${cls}"><div class="sv">${val}</div><div class="sl">${label}</div></div>`;
+    const refresh = async () => {
+      const tot = { pv: 0, load: 0, grid: 0, batt: 0, soc: [], n: 0 };
+      await Promise.all(auth.map(async (a, i) => {
+        const el = siteEls[i], dot = el.querySelector('.dot');
+        try {
+          const m = Object.fromEntries((await fetchMetrics(a)).map((x) => [x.topic, x]));
+          const v = (t) => +((m[t] || {}).value) || 0;
+          const pv = v('total/pv_power'), load = v('total/load_power'), grid = v('total/grid_power'), batt = v('total/battery_power'), soc = v('total/battery_state_of_charge');
+          tot.pv += pv; tot.load += load; tot.grid += grid; tot.batt += batt; tot.soc.push(soc); tot.n++;
+          dot.className = 'dot on';
+          el.querySelector('.meta').textContent = `Updated ${new Date().toLocaleTimeString()}${m['inverter_1/device_mode'] ? ' · ' + m['inverter_1/device_mode'].value : ''}`;
+          el.querySelector('.stats').innerHTML = stat('Solar', kW(pv), 'pv') + stat('Load', kW(load)) + stat('Battery', `${soc.toFixed(0)}%`, 'soc') +
+            stat(batt >= 0 ? 'Charging' : 'Discharging', kW(Math.abs(batt))) + stat(grid >= 0 ? 'From grid' : 'To grid', kW(Math.abs(grid)));
+        } catch (e) { dot.className = 'dot off'; el.querySelector('.meta').textContent = 'Offline — ' + e.message; }
+      }));
+      const soc = tot.soc.length ? tot.soc.reduce((a, b) => a + b, 0) / tot.soc.length : 0;
+      root.querySelector('.sum .stats').innerHTML = stat('Solar', kW(tot.pv), 'pv') + stat('Load', kW(tot.load)) + stat('Battery avg', `${soc.toFixed(0)}%`, 'soc') +
+        stat(tot.batt >= 0 ? 'Charging' : 'Discharging', kW(Math.abs(tot.batt))) + stat(tot.grid >= 0 ? 'From grid' : 'To grid', kW(Math.abs(tot.grid)));
+    };
+    await refresh();
+    solarTimer = setInterval(() => { if ($('#viewer').classList.contains('hidden')) return clearInterval(solarTimer); refresh(); }, 10000);
+  } catch (e) { root.innerHTML = `<div class="ctl">Couldn't reach Solar Assistant (${e.message}).</div>`; }
+}
 
 // ---- Change a device password from the page and save it to the vault ----
 function updatePassword(d) {

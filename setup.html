@@ -117,12 +117,13 @@ function renderDevices() {
     del.onclick = () => { devices.splice(i, 1); renderDevices(); };
     box.appendChild(r);
     const l = document.createElement('div'); l.className = 'row login';
-    l.innerHTML = `<input placeholder="Device username (optional)" autocomplete="off"><input placeholder="Device password (optional)" autocomplete="off"><input placeholder="Note (optional)"><input placeholder="Rachio API key (Rachio only)" autocomplete="off"><input type="number" min="0" placeholder="Password expires every N days (optional)">`;
+    l.innerHTML = `<input placeholder="Device username (optional)" autocomplete="off"><input placeholder="Device password (optional)" autocomplete="off"><input placeholder="Note (optional)"><input placeholder="API key (Rachio or Solar Assistant)" autocomplete="off"><input type="number" min="0" placeholder="Password expires every N days (optional)">`;
     const [lu, lp, ln, lk, lr] = l.children;
-    lu.value = d.login?.username || ''; lp.value = d.login?.password || ''; ln.value = d.note || ''; lk.value = d.rachioKey || ''; lr.value = d.rotateDays || '';
+    const keyField = d.solarKey !== undefined || /solar/i.test(d.name) ? 'solarKey' : 'rachioKey';
+    lu.value = d.login?.username || ''; lp.value = d.login?.password || ''; ln.value = d.note || ''; lk.value = d[keyField] || ''; lr.value = d.rotateDays || '';
     const setLogin = () => { const o = {}; if (lu.value) o.username = lu.value; if (lp.value) o.password = lp.value; d.login = Object.keys(o).length ? o : undefined; };
     lu.oninput = setLogin; lp.oninput = () => { setLogin(); d.loginUpdated = Date.now(); }; ln.oninput = () => (d.note = ln.value || undefined);
-    lk.oninput = () => (d.rachioKey = lk.value.trim() || undefined); lr.oninput = () => (d.rotateDays = +lr.value || undefined);
+    lk.oninput = () => (d[keyField] = lk.value.trim() || undefined); lr.oninput = () => (d.rotateDays = +lr.value || undefined);
     box.appendChild(l);
   });
 }
