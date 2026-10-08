@@ -2,8 +2,8 @@
 // embed:false = the site refuses to load inside another page, so it opens in a new tab.
 // app:true   = no web portal exists; the tile just links to the vendor site.
 window.HH_DEFAULT_DEVICES = [
-  { icon: '☀️', name: 'Solar Assistant 1', sub: 'Inverter monitor', url: 'http://solar-assistant-1.local', group: 'Power' },
-  { icon: '☀️', name: 'Solar Assistant 2', sub: 'Inverter monitor', url: 'http://solar-assistant-2.local', group: 'Power' },
+  { icon: '☀️', name: 'Solar Assistant 1', sub: '3rd-rail', url: 'https://3rd-rail.us.solar-assistant.io/', group: 'Power', embed: false },
+  { icon: '☀️', name: 'Solar Assistant 2', sub: '3rd-rail-01', url: 'https://3rd-rail-01.us.solar-assistant.io/', group: 'Power', embed: false },
   { icon: '🔋', name: 'Batteries (8)', sub: 'Smart Life', url: 'https://ipc.ismartlife.me/', group: 'Power', embed: false,
     note: 'The 8 batteries are managed in the Smart Life app. This is the Smart Life web login.' },
   { icon: '🛰️', name: 'Starlink', sub: 'Dish & account', url: 'http://192.168.100.1', group: 'Network', embed: false,
