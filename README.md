@@ -110,3 +110,15 @@ produces this JSON (a Home Assistant relay would map `climate.*` / `sensor.*` / 
 ```
 `open` is the door/window state (null when the source doesn't know it — ecobee's API generally doesn't;
 Home Assistant via HomeKit does). Temperatures are °F.
+
+## Remaining tasks
+
+- [ ] **ecobee (stop-gap):** add `ECOBEE_PASSWORD` as a *Secret* on the `ecobee-relay` worker, then run **Connect ecobee** on
+      the Thermostats tile (SMS code, once). Record whether a refresh token was issued; if not, drop this route.
+- [ ] **ecobee (proper): Home Assistant bridge** — pick the box (Pi / mini PC / VM / HA Green), thermostat models +
+      HomeKit setup codes (unpair from Apple Home first), remote access (Cloudflare Tunnel needs a domain; or
+      DuckDNS + FortiGate VIP), room/sensor names. Then build `ha-relay` producing the climate shape and switch
+      the Thermostats tile's `climateRelay` to it. Door/window SmartSensors only become visible on this route.
+- [ ] **Vault logins still missing:** Garage Doors (myQ), Matic.
+- [ ] **More batteries:** append new Virtual IDs to `batteries` on the Solar Assistant tile (per site).
+- [ ] **Tuya trial plan:** renew at iot.tuya.com when the battery chips go blank.
