@@ -176,7 +176,7 @@ $('#loginForm').addEventListener('submit', async (e) => {
     rawKey = await HH.unlockKey(vault, $('#u').value, $('#p').value);
     data = await HH.readData(vault, rawKey);
     sessionStorage.setItem('hh', JSON.stringify({ name: $('#u').value.trim(), key: HH.b64(rawKey) }));
-    show();
+    show(); openFromHash();
   } catch {
     $('#loginErr').textContent = 'Wrong name or password.';
   } finally { btn.disabled = false; btn.textContent = 'Sign in'; $('#p').value = ''; }
@@ -186,7 +186,7 @@ $('#loginForm').addEventListener('submit', async (e) => {
 (async () => {
   try {
     const s = JSON.parse(sessionStorage.getItem('hh'));
-    if (s && vault) { rawKey = HH.unb64(s.key); data = await HH.readData(vault, rawKey); $('#u').value = s.name; show(); }
+    if (s && vault) { rawKey = HH.unb64(s.key); data = await HH.readData(vault, rawKey); $('#u').value = s.name; show(); openFromHash(); }
   } catch { sessionStorage.removeItem('hh'); }
 })();
 
@@ -260,8 +260,18 @@ function openDevice(d) {
   $('#viewer').classList.remove('hidden');
   const hash = '#' + encodeURIComponent(d.name);
   if (location.hash !== hash) history.pushState({ v: 1 }, '', hash);
+  else if (!history.state) history.replaceState({ v: 1, direct: true }, '', hash);   // landed here directly: no entry to go back to
 }
-function closeViewer() { $('#viewer').classList.add('hidden'); $('#frame').src = 'about:blank'; $('#vlive').innerHTML = ''; }
+function closeViewer() { $('#viewer').classList.add('hidden'); $('#frame').src = 'about:blank'; $('#vlive').innerHTML = ''; clearInterval(solarTimer); clearInterval(climateTimer); }
+// Back: always close in place and drop the #tile from the address — never rely on browser history,
+// which leaves the site when there is no earlier entry (direct link, reload, hard refresh).
+function goBack() { history.replaceState(null, '', location.pathname + location.search); closeViewer(); }
+// Reopen a tile when the page loads (or is reloaded) with #Name in the address.
+function openFromHash() {
+  const name = decodeURIComponent(location.hash.slice(1));
+  const d = name && data && data.devices.find((x) => x.name === name);
+  if (d) openDevice(d); else closeViewer();
+}
 
 // ---- Solar Assistant merged panel (both sites, via the relay worker in relay/worker.js) ----
 let solarTimer = null;
@@ -486,8 +496,8 @@ async function rachioPanel(key, root) {
     }
   } catch (e) { root.innerHTML = `<div class="ctl">Couldn't reach Rachio (${e.message}). Use "Open in new tab".</div>`; }
 }
-$('#backBtn').onclick = () => history.back();
-window.addEventListener('popstate', () => { if (!location.hash) closeViewer(); });
+$('#backBtn').onclick = goBack;
+window.addEventListener('popstate', () => { if (!location.hash) closeViewer(); else openFromHash(); });
 </script>
 </body>
 </html>
