@@ -113,7 +113,7 @@ Home Assistant via HomeKit does). Temperatures are °F.
 
 ## Remaining tasks
 
-- [ ] **ecobee (stop-gap):** BLOCKED by 2-step verification. Password grant works, but ecobee's Auth0 client refuses every MFA completion grant (oob/SMS, otp, recovery-code) — tested 2026-10-08. Works only if 2-step is turned off on the account. Decision pending.
+- [x] **ecobee (stop-gap): live** since 2026-10-08 — 2-step verification turned off on the ecobee account (Auth0 client disallows every MFA grant), `ECOBEE_PASSWORD` set as a worker secret, refresh token held in KV. 4 thermostats + 4 remote sensors. ecobee's API returns **no door/window SmartSensors** — those still need the Home Assistant route.
 - [ ] **ecobee (proper): Home Assistant bridge** — pick the box (Pi / mini PC / VM / HA Green), thermostat models +
       HomeKit setup codes (unpair from Apple Home first), remote access (Cloudflare Tunnel needs a domain; or
       DuckDNS + FortiGate VIP), room/sensor names. Then build `ha-relay` producing the climate shape and switch

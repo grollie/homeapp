@@ -135,7 +135,7 @@ async function api(env, path, json, retry = true) {
 
 // ---- normalise ecobee's thermostat object into the climate shape the page renders ----
 async function thermostats(env) {
-  const sel = { selection: { selectionType: 'registered', selectionMatch: '', includeRuntime: true, includeSensors: true, includeSettings: true, includeEvents: true, includeEquipmentStatus: true, includeWeather: true } };
+  const sel = { selection: { selectionType: 'registered', selectionMatch: '', includeRuntime: true, includeSensors: true, includeSettings: true, includeEvents: true, includeEquipmentStatus: true, includeWeather: true, includeProgram: true } };
   const j = await api(env, '/thermostat', JSON.stringify(sel));
   const f = (x) => (x == null ? null : Math.round(x) / 10);                 // ecobee sends °F ×10
   return (j.thermostatList || []).map((t) => {
