@@ -39,6 +39,16 @@ main{padding:16px;max-width:1200px;margin:0 auto}
 .tile .sub{font-size:12px;color:var(--muted)}
 .tile .badge{font-size:11px;color:var(--muted);margin-top:auto}
 h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 10px}
+/* dashboard summary strip */
+.summary{background:var(--panel);border:1px solid var(--accent);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow);margin-bottom:6px}
+.summary:empty,.summary .sgrid:empty{display:none}
+.sgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px}
+.stile{background:var(--bg);border-radius:10px;padding:8px 10px;min-width:0}
+.stile .sv{font-size:20px;font-weight:600;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stile .sl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.stile .ss{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stile.pv .sv{color:var(--accent)}.stile.soc .sv{color:#2e8b57}.stile.run .sv{color:#4a90d9}.stile.good .sv{color:#2e8b57}.stile.bad .sv{color:var(--danger)}
+.pk,.pk-at{color:var(--muted);font-weight:400;font-size:11px}
 /* viewer */
 #viewer{position:fixed;inset:0;background:var(--bg);z-index:10;display:flex;flex-direction:column}
 #viewer .bar{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
@@ -196,6 +206,9 @@ function show() {
   $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
   $('#who').textContent = $('#u').value.trim();
   const main = $('#main'); main.innerHTML = '';
+  // "Today at a glance" summary card, fed by the live relays; sits above the tile groups.
+  const sum = document.createElement('div'); sum.id = 'summary'; sum.className = 'summary'; sum.innerHTML = '<div class="sgrid"></div>'; main.appendChild(sum);
+  summaryCard(sum);
   const groups = {};
   for (const d of data.devices) (groups[d.group || 'Devices'] ||= []).push(d);
   for (const [g, list] of Object.entries(groups)) {
@@ -320,7 +333,9 @@ async function solarPanel(d, root) {
   const refresh = async () => {
     const r = await fetch(`${relay.replace(/\/$/, '')}/metrics?k=${encodeURIComponent(key)}`);
     if (!r.ok) throw new Error('relay ' + r.status);
-    const [{ sites }, bats] = await Promise.all([r.json(), fetchBatteries().catch(() => null)]);
+    const [{ sites, today }, bats] = await Promise.all([r.json(), fetchBatteries().catch(() => null)]);
+    const tAt = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '');
+    const peakOf = (p) => (p && p.w ? `${kW(p.w)}<small class="pk-at"> @ ${tAt(p.at)}</small>` : '—');
     if (!built) {
       root.innerHTML = '<div class="ctl sum"><h3>☀️ Both systems</h3><div class="stats"></div></div>' + sites.map((s) =>
         `<div class="ctl site"><h3><span class="dot"></span><span></span></h3><div class="meta"></div><div class="alertbox hidden"></div><div class="stats"></div><div class="mppts"></div><div class="bstrip"></div><div class="acts"><a class="btn small" target="_blank" rel="noopener">Full dashboard ↗</a></div></div>`).join('') +
@@ -361,8 +376,9 @@ async function solarPanel(d, root) {
       // MPPT strings: one at ~0 while the other is producing means a string/breaker/connector fault.
       const mppts = Object.keys(m).filter((t) => /^inverter_\d+\/pv_power_\d+$/.test(t)).sort().map((t) => ({ t, w: v(t), volts: v(t.replace('pv_power', 'pv_voltage')), amps: v(t.replace('pv_power', 'pv_current')) }));
       const fault = mppts.length > 1 && mppts.some((x) => x.w <= 5) && mppts.some((x) => x.w > 100);
-      const mp = mppts.map((x, k) => { const dead = fault && x.w <= 5; return `<span class="mppt${dead ? ' dead' : ''}" title="${x.volts} V · ${x.amps} A">MPPT ${k + 1}: <b>${kW(x.w)}</b>${dead ? ' ⚠' : ''}</span>`; }).join('');
-      el.querySelector('.stats').innerHTML = row(pv, load, soc, batt, grid) + (rt ? stat(`Runtime to ${reserve}%`, rt, 'run') : '');
+      const rec = (today && today.sites && today.sites[s.id]) || {};
+      const mp = mppts.map((x, k) => { const dead = fault && x.w <= 5; const pk = rec.mppt && rec.mppt[x.t]; return `<span class="mppt${dead ? ' dead' : ''}" title="${x.volts} V · ${x.amps} A${pk && pk.w ? `\npeak today ${kW(pk.w)} at ${tAt(pk.at)}` : ''}">MPPT ${k + 1}: <b>${kW(x.w)}</b>${dead ? ' ⚠' : ''}${pk && pk.w ? `<small class="pk"> · peak ${kW(pk.w)}</small>` : ''}</span>`; }).join('');
+      el.querySelector('.stats').innerHTML = row(pv, load, soc, batt, grid) + stat('Peak solar today', peakOf(rec.pv), 'pv') + (rec.pvEnergy ? stat('Solar today', `${rec.pvEnergy.toFixed(1)} kWh`, 'pv') : '') + (rt ? stat(`Runtime to ${reserve}%`, rt, 'run') : '');
       el.querySelector('.mppts').innerHTML = mp;
       el.classList.toggle('alert', fault);
       const box = el.querySelector('.alertbox'); box.classList.toggle('hidden', !fault);
@@ -376,10 +392,68 @@ async function solarPanel(d, root) {
     const soc = tot.soc.length ? tot.soc.reduce((a, b) => a + b, 0) / tot.soc.length : 0;
     // Banks aren't shared between sites, so the house runs until the first bank empties.
     const all = runs.filter(Boolean), rtAll = all.length ? fmtRun({ hours: Math.min(...all.map((r) => r.hours)) }) : null;
-    root.querySelector('.sum .stats').innerHTML = row(tot.pv, tot.load, soc, tot.batt, tot.grid, 'Battery avg') + (rtAll ? stat(`Runtime to ${reserve}% (first bank)`, rtAll, 'run') : '');
+    const sumEnergy = today && today.sites ? Object.values(today.sites).reduce((a, r) => a + (r.pvEnergy || 0), 0) : 0;
+    root.querySelector('.sum .stats').innerHTML = row(tot.pv, tot.load, soc, tot.batt, tot.grid, 'Battery avg') + stat('Peak solar today', peakOf(today && today.both), 'pv') + (sumEnergy ? stat('Solar today', `${sumEnergy.toFixed(1)} kWh`, 'pv') : '') + (rtAll ? stat(`Runtime to ${reserve}% (first bank)`, rtAll, 'run') : '');
   };
   try { await refresh(); } catch (e) { root.innerHTML = `<div class="ctl">Couldn't reach Solar Assistant (${e.message}).</div>`; return; }
   solarTimer = setInterval(() => { if ($('#viewer').classList.contains('hidden')) return clearInterval(solarTimer); refresh().catch(() => {}); }, 10000);
+}
+
+// ---- Dashboard summary: solar now + peak + energy, batteries + runtime, MPPT health, indoor temps ----
+let summaryTimer = null;
+async function summaryCard(root) {
+  clearInterval(summaryTimer);
+  const solar = data.devices.find((x) => x.solarRelay), clim = data.devices.find((x) => x.climateRelay);
+  if (!solar && !clim) { root.remove(); return; }
+  const kW = (w) => (Math.abs(w) >= 1000 ? (w / 1000).toFixed(2) + ' kW' : Math.round(w) + ' W');
+  const tile = (label, val, cls = '', sub = '') => `<div class="stile ${cls}"><div class="sv">${val}</div><div class="sl">${label}</div>${sub ? `<div class="ss">${sub}</div>` : ''}</div>`;
+  const refresh = async () => {
+    const parts = [];
+    if (solar) {
+      try {
+        const key = encodeURIComponent(solar.solarKey);
+        const [m, b] = await Promise.all([
+          fetch(`${solar.solarRelay.replace(/\/$/, '')}/metrics?k=${key}`).then((r) => r.json()),
+          solar.tuyaRelay ? fetch(`${solar.tuyaRelay.replace(/\/$/, '')}/devices?k=${key}`).then((r) => r.json()).catch(() => null) : null,
+        ]);
+        let pv = 0, load = 0, batt = 0, soc = [], faults = [];
+        for (const s of m.sites) {
+          if (s.error) continue;
+          const mm = Object.fromEntries(s.metrics.map((x) => [x.topic, x])), v = (t) => +((mm[t] || {}).value) || 0;
+          pv += v('total/pv_power'); load += v('total/load_power'); batt += v('total/battery_power'); soc.push(v('total/battery_state_of_charge'));
+          const strings = Object.keys(mm).filter((t) => /^inverter_\d+\/pv_power_\d+$/.test(t)).map(v);
+          if (strings.length > 1 && strings.some((w) => w <= 5) && strings.some((w) => w > 100)) faults.push(s.description || s.name);
+        }
+        const peak = m.today && m.today.both, energy = m.today && m.today.sites ? Object.values(m.today.sites).reduce((a, r) => a + (r.pvEnergy || 0), 0) : 0;
+        const avgSoc = soc.length ? soc.reduce((a, c) => a + c, 0) / soc.length : null;
+        parts.push(tile('Solar now', kW(pv), 'pv'));
+        parts.push(tile('Peak today', peak && peak.w ? kW(peak.w) : '—', 'pv', peak && peak.w ? new Date(peak.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''));
+        if (energy) parts.push(tile('Solar today', `${energy.toFixed(1)} kWh`, 'pv'));
+        parts.push(tile('Load', kW(load)));
+        parts.push(tile('Batteries', avgSoc == null ? '—' : `${avgSoc.toFixed(0)}%`, 'soc', batt >= 0 ? `charging ${kW(batt)}` : `discharging ${kW(-batt)}`));
+        if (b && b.devices && batt < 0) {
+          const reserve = solar.reserveSoc ?? 5, live = b.devices.filter((x) => x.online && x.remainAh != null && x.capAh);
+          const wh = live.reduce((a, x) => a + Math.max(0, x.remainAh - x.capAh * reserve / 100) * x.volts, 0), out = live.reduce((a, x) => a + Math.max(0, -(x.watts || 0)), 0);
+          if (out > 0) { const h = wh / out; parts.push(tile(`Runtime to ${reserve}%`, h >= 48 ? `${(h / 24).toFixed(1)} d` : `${Math.floor(h)}h ${Math.round((h % 1) * 60)}m`, 'run')); }
+        }
+        parts.push(faults.length ? tile('MPPT', '⚠ fault', 'bad', faults.join(', ')) : tile('MPPT strings', '✓ OK', 'good'));
+      } catch (e) { parts.push(tile('Solar', 'offline', 'bad', e.message)); }
+    }
+    if (clim) {
+      try {
+        const r = await fetch(`${clim.climateRelay.replace(/\/$/, '')}/thermostats?k=${encodeURIComponent(clim.solarKey || clim.climateKey)}`).then((r) => r.json());
+        if (r.thermostats && r.thermostats.length) {
+          const ts = r.thermostats, avg = ts.reduce((a, t) => a + (t.temp || 0), 0) / ts.length;
+          const active = ts.filter((t) => t.running.length).map((t) => `${t.name} ${t.running.some((x) => /cool/i.test(x)) ? 'cooling' : t.running.some((x) => /heat/i.test(x)) ? 'heating' : 'fan'}`);
+          parts.push(tile('Indoor avg', `${Math.round(avg)}°`, '', active.length ? active.join(', ') : 'all idle'));
+          if (ts[0].outside) parts.push(tile('Outside', `${Math.round(ts[0].outside.temp)}°`, '', ts[0].outside.condition || ''));
+        }
+      } catch {}
+    }
+    root.querySelector('.sgrid').innerHTML = parts.join('');
+  };
+  refresh().catch(() => {});
+  summaryTimer = setInterval(() => { if (!document.body.contains(root)) return clearInterval(summaryTimer); refresh().catch(() => {}); }, 30000);
 }
 
 // ---- Thermostats (ecobee now; Home Assistant later) — the relay returns the same "climate shape" either way ----

@@ -25,7 +25,11 @@ export default {
     if (!env.RELAY_KEY || url.searchParams.get('k') !== env.RELAY_KEY) return new Response('Unauthorized', { status: 401, headers: cors });
 
     try {
-      if (url.pathname === '/metrics') return Response.json({ at: new Date().toISOString(), sites: await allMetrics(env, url.searchParams.has('fresh')) }, { headers: cors });
+      if (url.pathname === '/metrics') {
+        const sites = await allMetrics(env, url.searchParams.has('fresh'));
+        const today = await trackPeaks(env, sites);
+        return Response.json({ at: new Date().toISOString(), sites, today }, { headers: cors });
+      }
       if (url.pathname === '/alerts/check') return Response.json(await checkMppt(env, url.searchParams.has('force')), { headers: cors });
       if (url.pathname === '/alerts/test') {
         const to = url.searchParams.get('to');                 // optional override, e.g. &to=someone@example.com
@@ -58,6 +62,34 @@ async function allMetrics(env, fresh) {
   }));
 }
 
+// ---- Today's peaks (site PV, each MPPT string, and both sites combined), kept in KV per local day ----
+const TZ = 'America/New_York';                               // Watkinsville, GA — from the ecobee thermostats
+const localDay = () => new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+async function trackPeaks(env, sites) {
+  const day = localDay(), key = `peaks:${day}`;
+  const st = (await env.STATE.get(key, 'json')) || { day, sites: {}, both: { w: 0, at: null } };
+  const now = new Date().toISOString();
+  let changed = false, totalPv = 0, allOk = true;
+  for (const s of sites) {
+    if (s.error) { allOk = false; continue; }
+    const m = Object.fromEntries(s.metrics.map((x) => [x.topic, x]));
+    const v = (t) => +((m[t] || {}).value) || 0;
+    const rec = st.sites[s.id] || (st.sites[s.id] = { name: s.name, pv: { w: 0, at: null }, mppt: {} });
+    const pv = v('total/pv_power'); totalPv += pv;
+    if (pv > rec.pv.w) { rec.pv = { w: pv, at: now }; changed = true; }
+    for (const t of Object.keys(m).filter((t) => /^inverter_\d+\/pv_power_\d+$/.test(t)).sort()) {
+      const w = v(t), cur = rec.mppt[t] || { w: 0, at: null };
+      if (w > cur.w) { rec.mppt[t] = { w, at: now }; changed = true; }
+      else if (!rec.mppt[t]) { rec.mppt[t] = cur; changed = true; }
+    }
+    // Daily energy from Solar Assistant's own counter (resets at its midnight): keep the latest reading.
+    rec.pvEnergy = v('total/pv_energy'); rec.loadEnergy = v('total/load_energy'); changed = true;
+  }
+  if (allOk && totalPv > st.both.w) { st.both = { w: totalPv, at: now }; changed = true; }
+  if (changed) await env.STATE.put(key, JSON.stringify(st), { expirationTtl: 3 * 86400 });
+  return st;
+}
+
 // ---- MPPT fault alerting ----
 // Fault = one PV string <= DEAD_W while another on the same inverter > LIVE_W. Alert after it persists for
 // CONFIRM consecutive checks, remind every REMIND_H hours, and send a recovery note when it clears. State in KV.
@@ -66,6 +98,7 @@ const kW = (w) => (Math.abs(w) >= 1000 ? (w / 1000).toFixed(2) + ' kW' : Math.ro
 
 async function checkMppt(env, force = false) {
   const sites = await allMetrics(env);
+  await trackPeaks(env, sites).catch(() => {});               // the 5-min cron also samples today's peaks
   const report = [];
   for (const s of sites) {
     if (s.error) { report.push({ site: s.name, skipped: s.error }); continue; }
