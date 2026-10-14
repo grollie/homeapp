@@ -65,15 +65,16 @@ async function allMetrics(env, fresh) {
 // ---- Today's peaks (site PV, each MPPT string, and both sites combined), kept in KV per local day ----
 const TZ = 'America/New_York';                               // Watkinsville, GA — from the ecobee thermostats
 const localDay = () => new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-// KV free tier allows 1,000 writes/day, so: write only when a peak actually rises (and never more than once a
-// minute per key), and refresh the energy counters at most every 10 minutes. Everything else is read-only.
+// KV free tier allows 1,000 writes/day (whole account), so: write only when a peak actually rises, never more
+// than once per 2 minutes overall (throttle timestamp lives in the record itself, so every Cloudflare location
+// shares it), and snapshot the energy counters every 30 minutes. Everything else is read-only.
 let lastPeakWrite = 0;
 async function trackPeaks(env, sites) {
   const day = localDay(), key = `peaks:${day}`;
-  const st = (await env.STATE.get(key, 'json')) || { day, sites: {}, both: { w: 0, at: null }, energyAt: 0 };
+  const st = (await env.STATE.get(key, 'json')) || { day, sites: {}, both: { w: 0, at: null }, energyAt: 0, wroteAt: 0 };
   const now = new Date().toISOString(), ms = Date.now();
   let changed = false, totalPv = 0, allOk = true;
-  const energyDue = ms - (st.energyAt || 0) > 10 * 60e3;
+  const energyDue = ms - (st.energyAt || 0) > 30 * 60e3;
   for (const s of sites) {
     if (s.error) { allOk = false; continue; }
     const m = Object.fromEntries(s.metrics.map((x) => [x.topic, x]));
@@ -90,8 +91,8 @@ async function trackPeaks(env, sites) {
   }
   if (allOk && totalPv > st.both.w) { st.both = { w: totalPv, at: now }; changed = true; }
   if (energyDue) { st.energyAt = ms; changed = true; }
-  if (changed && ms - lastPeakWrite > 60e3) {
-    lastPeakWrite = ms;
+  if (changed && ms - lastPeakWrite > 120e3 && ms - (st.wroteAt || 0) > 120e3) {
+    lastPeakWrite = ms; st.wroteAt = ms;
     await env.STATE.put(key, JSON.stringify(st), { expirationTtl: 3 * 86400 }).catch(() => {});
   }
   return st;

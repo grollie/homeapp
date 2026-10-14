@@ -36,7 +36,7 @@ export default {
       if (url.pathname === '/set') return Response.json(await setHold(env, url.searchParams), { headers: cors });
       // Cancel the hold and go back to the schedule: /resume?id=<thermostat>
       if (url.pathname === '/resume') { await tpost(env, { selection: { selectionType: 'thermostats', selectionMatch: url.searchParams.get('id') }, functions: [{ type: 'resumeProgram', params: { resumeAll: true } }] }); return Response.json({ ok: true }, { headers: cors }); }
-      if (url.pathname === '/logout') { await env.STATE.delete('ecobee:token'); await env.STATE.delete('ecobee:refresh'); return Response.json({ ok: true }, { headers: cors }); }
+      if (url.pathname === '/logout') { mem = { access_token: '', exp: 0, refresh: '' }; await env.STATE.delete('ecobee:token').catch(() => {}); await env.STATE.delete('ecobee:refresh').catch(() => {}); return Response.json({ ok: true }, { headers: cors }); }
       // One-time connect for SMS 2-step: /connect/start sends the text, /connect/finish?code=123456 completes it
       // and stores the refresh token so the relay never has to ask again.
       if (url.pathname === '/connect/start') return Response.json(await smsStart(env), { headers: cors });
@@ -54,20 +54,33 @@ export default {
 // (which succeeds outright only if the account has no 2-step, or answers TOTP from ECOBEE_TOTP).
 const SCOPE = 'openid offline_access smartRead smartWrite piiRead';
 const post = (body) => fetch(AUTH, { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': UA }, body: JSON.stringify(body) });
+// Token lives in memory first (per isolate) and in KV second. KV writes are best-effort: the account's free
+// KV quota is 1,000 writes/day and KV reads lag ~60 s, so leaning on KV for every call caused refresh storms.
+let mem = { access_token: '', exp: 0, refresh: '' };
+let refreshing = null;                                        // de-dupe concurrent refreshes in one isolate
 async function saveToken(env, j) {
-  await env.STATE.put('ecobee:token', JSON.stringify({ access_token: j.access_token, exp: Date.now() + ((j.expires_in || 3600) - 120) * 1000 }));
-  if (j.refresh_token) await env.STATE.put('ecobee:refresh', j.refresh_token);
+  mem = { access_token: j.access_token, exp: Date.now() + ((j.expires_in || 3600) - 120) * 1000, refresh: j.refresh_token || mem.refresh };
+  env.STATE.put('ecobee:token', JSON.stringify({ access_token: mem.access_token, exp: mem.exp })).catch(() => {});
+  if (j.refresh_token) env.STATE.put('ecobee:refresh', j.refresh_token).catch(() => {});
   return j.access_token;
 }
 async function token(env, force = false) {
-  const cached = !force && (await env.STATE.get('ecobee:token', 'json'));
-  if (cached && Date.now() < cached.exp) return cached.access_token;
-  const refresh = await env.STATE.get('ecobee:refresh');
+  if (!force && mem.access_token && Date.now() < mem.exp) return mem.access_token;
+  if (!force) {
+    const cached = await env.STATE.get('ecobee:token', 'json').catch(() => null);
+    if (cached && Date.now() < cached.exp) { mem.access_token = cached.access_token; mem.exp = cached.exp; return cached.access_token; }
+  }
+  if (refreshing) return refreshing;
+  refreshing = (async () => { try { return await loginFlow(env); } finally { refreshing = null; } })();
+  return refreshing;
+}
+async function loginFlow(env) {
+  const refresh = mem.refresh || (await env.STATE.get('ecobee:refresh').catch(() => null));
   if (refresh) {
     const r = await post({ grant_type: 'refresh_token', client_id: CLIENT_ID, refresh_token: refresh });
     const j = await r.json();
     if (r.ok && j.access_token) return saveToken(env, j);
-    await env.STATE.delete('ecobee:refresh');                  // refresh token revoked/expired → fall through
+    mem.refresh = ''; env.STATE.delete('ecobee:refresh').catch(() => {});   // refresh token revoked/expired → fall through
   }
   if (!env.ECOBEE_USER || !env.ECOBEE_PASSWORD) throw new Error('ECOBEE_USER / ECOBEE_PASSWORD not set');
   const r = await post({ grant_type: 'password', client_id: CLIENT_ID, audience: AUDIENCE, scope: SCOPE, username: env.ECOBEE_USER, password: env.ECOBEE_PASSWORD });
