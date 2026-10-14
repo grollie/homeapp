@@ -46,7 +46,11 @@ h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--
 .mrow{display:flex;justify-content:space-between;align-items:center;gap:6px}
 .mmode{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#fff;background:#8a929c;padding:2px 7px;border-radius:999px}
 .mmode.heat{background:#e8702a}.mmode.cool{background:#2f8be6}.mmode.auto{background:#2e8b57}
-.mtemps{display:flex;align-items:baseline;gap:8px}.mtemps b{font-size:26px;font-weight:300;letter-spacing:-1px}.mtemps small{font-size:13px;color:var(--muted)}
+.mtemps{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.mtemps b{font-size:26px;font-weight:300;letter-spacing:-1px}
+.mset{display:inline-flex;align-items:center;gap:2px}.mset .sp{font-size:15px;font-weight:600}
+.mset .adj{width:24px;height:24px;font-size:15px}.mset .sep{margin:0 2px}
+.tile.mini{cursor:pointer}.tile.mini .setmsg{margin-left:6px;font-size:11px}
+.tile.mini .btn.small{padding:1px 7px;font-size:11px;margin-left:4px}
 .mdoors{display:flex;align-items:center;gap:4px;margin-top:2px}
 .mdoors i{width:8px;height:8px;border-radius:50%;background:#2e8b57;display:inline-block}.mdoors i.open{background:var(--danger)}
 .mdoors small{font-size:11px;color:var(--muted);margin-left:4px}
@@ -127,6 +131,14 @@ h2.sec.sub{margin-top:14px}
 .cur{font-size:56px;font-weight:300;line-height:1;letter-spacing:-2px}
 .sps{font-size:28px;font-weight:500;line-height:1.2;white-space:nowrap}
 .sp.heat{color:#e8702a}.sp.cool{color:#2f8be6}.sp.off{color:var(--muted)}.sep{color:var(--muted);margin:0 4px}
+.spctl{display:inline-flex;align-items:center;gap:4px}
+.spctl .adj{width:30px;height:30px;border-radius:50%;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:18px;line-height:1;cursor:pointer}
+.spctl .adj:hover{border-color:var(--accent)}
+.sp.pending{text-decoration:underline dotted}
+.holdsel{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:8px}
+.holdsel select{font:inherit;padding:3px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text)}
+.setmsg{color:var(--accent)}
+.hold .btn.small{margin-left:8px;vertical-align:middle}
 .curl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:4px}
 .tmeta{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:3px}
 .hold{color:var(--accent);font-weight:600}.hold.muted{color:var(--muted);font-weight:400}
@@ -442,6 +454,36 @@ async function solarPanel(d, root) {
   solarTimer = setInterval(() => { if ($('#viewer').classList.contains('hidden')) return clearInterval(solarTimer); refresh().catch(() => {}); }, 10000);
 }
 
+// ---- Shared setpoint controls (expanded cards and home-page mini-tiles): ± changes the number at once and applies
+// ~1.2 s after the last tap as a hold; "Resume schedule" cancels the hold. Each card carries data-id. ----
+const setpointTimers = {};
+function wireSetpointControls(root, d, refresh) {
+  const relayBase = d.climateRelay.replace(/\/$/, ''), key = d.solarKey || d.climateKey;
+  for (const card of root.querySelectorAll('[data-id]')) {
+    const id = card.dataset.id, msg = card.querySelector('.setmsg');
+    for (const b of card.querySelectorAll('.adj')) b.onclick = (ev) => {
+      ev.stopPropagation();
+      const sp = b.parentElement.querySelector('.sp');
+      const val = Math.min(95, Math.max(45, (+sp.dataset.val || 70) + +b.dataset.d));
+      sp.dataset.val = val; sp.textContent = `${val}°`; sp.classList.add('pending');
+      if (msg) msg.textContent = 'Applying…';
+      clearTimeout(setpointTimers[id]);
+      setpointTimers[id] = setTimeout(async () => {
+        const q = new URLSearchParams({ k: key, id, hold: card.querySelector('.holdlen')?.value || 'nextTransition' });
+        for (const s of card.querySelectorAll('.spctl')) q.set(s.dataset.kind, s.querySelector('.sp').dataset.val);
+        try {
+          const r = await (await fetch(`${relayBase}/set?${q}`)).json();
+          if (r.error) throw new Error(r.error);
+          if (msg) msg.textContent = `Set to ${r.mode === 'auto' ? `${r.heat}°–${r.cool}°` : r.mode === 'heat' ? r.heat + '°' : r.cool + '°'}.`;
+          setTimeout(() => refresh().catch(() => {}), 1500);
+        } catch (e) { if (msg) msg.textContent = e.message; else alert(e.message); }
+      }, 1200);
+    };
+    const res = card.querySelector('.resume');
+    if (res) res.onclick = async (ev) => { ev.stopPropagation(); res.disabled = true; try { const r = await (await fetch(`${relayBase}/resume?k=${encodeURIComponent(key)}&id=${id}`)).json(); if (r.error) throw new Error(r.error); setTimeout(() => refresh().catch(() => {}), 1500); } catch (e) { if (msg) msg.textContent = e.message; res.disabled = false; } };
+  }
+}
+
 // ---- Condensed climate on the home page: thermostat mini-tiles + door chips; click a tile for the full view ----
 let climateHomeTimer = null;
 async function climateHome(d, root) {
@@ -457,20 +499,22 @@ async function climateHome(d, root) {
     const tiles = ts.map((t) => {
       const mode = (t.mode || 'off').toLowerCase();
       const run = t.running.some((x) => /cool/i.test(x)) ? '❄ cooling' : t.running.some((x) => /heat/i.test(x)) ? '🔥 heating' : t.running.length ? '🌀 fan' : 'idle';
-      const set = mode === 'auto' ? `${deg(t.heatSet)}–${deg(t.coolSet)}` : mode === 'heat' ? deg(t.heatSet) : mode === 'cool' ? deg(t.coolSet) : 'off';
+      const ctl = (kind, val) => `<span class="spctl" data-kind="${kind}"><button class="adj" data-d="-1" title="−1°">−</button><span class="sp ${kind}" data-val="${val ?? ''}">${deg(val)}</span><button class="adj" data-d="1" title="+1°">+</button></span>`;
+      const set = mode === 'auto' ? `${ctl('heat', t.heatSet)}<span class="sep">–</span>${ctl('cool', t.coolSet)}` : mode === 'heat' ? ctl('heat', t.heatSet) : mode === 'cool' ? ctl('cool', t.coolSet) : '<span class="sp off">off</span>';
       const myDoors = t.sensors.filter((s) => s.open != null);
-      return `<button class="tile mini ${mode}${t.connected === false ? ' offline' : ''}" data-name="${t.name.replace(/"/g, '&quot;')}">
+      return `<div class="tile mini ${mode}${t.connected === false ? ' offline' : ''}" data-id="${t.id}" title="Open the full thermostat view">
         <span class="mrow"><span class="nm">${t.name}</span><span class="mmode ${mode}">${mode}</span></span>
-        <span class="mtemps"><b>${deg(t.temp)}</b><small>→ ${set}</small></span>
-        <span class="sub">${t.humidity != null ? t.humidity + '% · ' : ''}${run}${t.hold ? ' · hold' : ''}</span>
+        <span class="mtemps"><b>${deg(t.temp)}</b><span class="mset">${set}</span></span>
+        <span class="sub">${t.humidity != null ? t.humidity + '% · ' : ''}${run}${t.hold ? ` · hold <button class="btn small resume">resume</button>` : ''}<span class="setmsg"></span></span>
         ${myDoors.length ? `<span class="mdoors">${myDoors.map((s) => `<i class="${s.open ? 'open' : ''}" title="${s.name}: ${s.open ? 'open' : 'closed'}"></i>`).join('')}<small>${myDoors.filter((s) => s.open).length ? myDoors.filter((s) => s.open).map((s) => s.name).join(', ') + ' open' : 'doors closed'}</small></span>` : ''}
-      </button>`;
+      </div>`;
     }).join('');
     root.innerHTML = `<div class="sprhead"><h2 class="sec">Climate${outside ? ` <span class="sprstatus">· outside ${deg(outside.temp)} ${outside.condition || ''}</span>` : ''}</h2>
         <div class="sprstatus">${doors.length ? (openDoors.length ? `<b class="bad">${openDoors.length} door${openDoors.length > 1 ? 's' : ''} open</b>: ${openDoors.map((s) => s.name).join(', ')}` : 'All doors closed') + ` · as of ${(doors[0].asOf || '').slice(11, 16)}` : ''}</div></div>
       <div class="grid minis">${tiles}</div>
       ${doors.length ? `<div class="dstrip">${doors.map((s) => `<span class="dchip ${s.open ? 'open' : 'closed'}" title="${s.room}"><i></i>${s.name}<b>${s.open ? 'Open' : 'Closed'}</b></span>`).join('')}</div>` : ''}`;
-    for (const b of root.querySelectorAll('.tile.mini')) b.onclick = () => openDevice(d);
+    for (const b of root.querySelectorAll('.tile.mini')) b.onclick = (ev) => { if (ev.target.closest('button')) return; openDevice(d); };
+    wireSetpointControls(root, d, refresh);
   };
   try { await refresh(); } catch (e) { root.innerHTML = `<h2 class="sec">Climate</h2><div class="muted small">${/2-step|Connect ecobee|mfa/i.test(e.message) ? 'ecobee needs connecting — open the Thermostats tile.' : `Couldn't reach the thermostats (${e.message}).`}</div>`; }
   climateHomeTimer = setInterval(() => { if (!document.body.contains(root)) return clearInterval(climateHomeTimer); if ($('#viewer').classList.contains('hidden')) refresh().catch(() => {}); }, 30000);
@@ -642,12 +686,15 @@ async function climatePanel(d, root) {
       </div>${doors.length ? `<div class="dstrip">${doors.map(dchip).join('')}<span class="bsum">door sensors as of ${asOf ? asOf.slice(11, 16) : '—'} (ecobee reports them 5–15 min behind)</span></div>` : ''}</div>`;
     root.innerHTML = overview + thermostats.map((t) => {
       const mode = (t.mode || 'off').toLowerCase(), cls = modeCls[mode] || 'off';
-      const set = mode === 'auto' ? `<span class="sp heat">${deg(t.heatSet)}</span><span class="sep">–</span><span class="sp cool">${deg(t.coolSet)}</span>`
-        : mode === 'heat' ? `<span class="sp heat">${deg(t.heatSet)}</span>` : mode === 'cool' ? `<span class="sp cool">${deg(t.coolSet)}</span>` : '<span class="sp off">Off</span>';
+      // ± controls on each active setpoint; changes apply as a hold after a short pause
+      const ctl = (kind, val) => `<span class="spctl" data-kind="${kind}"><button class="adj" data-d="-1" title="−1°">−</button><span class="sp ${kind}" data-val="${val ?? ''}">${deg(val)}</span><button class="adj" data-d="1" title="+1°">+</button></span>`;
+      const set = mode === 'auto' ? `${ctl('heat', t.heatSet)}<span class="sep">–</span>${ctl('cool', t.coolSet)}`
+        : mode === 'heat' ? ctl('heat', t.heatSet) : mode === 'cool' ? ctl('cool', t.coolSet) : '<span class="sp off">Off</span>';
       const running = t.running.length ? t.running.map((x) => x.replace(/([a-z])([A-Z0-9])/g, '$1 $2').toLowerCase()).join(', ') : 'idle';
-      const hold = t.hold ? `<div class="hold">Hold${t.hold.name && t.hold.name !== 'auto' ? ` · ${t.hold.name}` : ''}${t.hold.until ? ` until ${t.hold.until.replace(/:\d\d$/, '')}` : ''}</div>` : (t.climate ? `<div class="hold muted">Schedule · ${t.climate}</div>` : '');
+      const hold = t.hold ? `<div class="hold">Hold${t.hold.name && t.hold.name !== 'auto' ? ` · ${t.hold.name}` : ''}${t.hold.until ? ` until ${t.hold.until.replace(/:\d\d$/, '')}` : ''} <button class="btn small resume" data-id="${t.id}">Resume schedule</button></div>` : (t.climate ? `<div class="hold muted">Schedule · ${t.climate}</div>` : '');
+      const holdSel = mode !== 'off' ? `<div class="holdsel"><label>Changes hold <select class="holdlen"><option value="nextTransition">until next schedule change</option><option value="2h">for 2 hours</option><option value="4h">for 4 hours</option><option value="indefinite">until I resume</option></select></label><span class="setmsg"></span></div>` : '';
       const sensors = t.sensors.map((s) => `<div class="sensor${s.inUse === false ? ' unused' : ''}"><span class="sn">${s.name}</span><span class="st2">${s.open != null ? `<b class="door ${s.open ? 'open' : 'closed'}">${s.open ? 'Open' : 'Closed'}</b>` : ''}${s.occupied != null ? `<i class="occ${s.occupied ? ' on' : ''}" title="${s.occupied ? 'Occupied' : 'No motion'}"></i>` : ''}<span class="stemp">${s.temp != null ? deg(s.temp) : ''}</span></span></div>`).join('');
-      return `<div class="ctl tstat ${cls}${t.connected === false ? ' offline' : ''}">
+      return `<div class="ctl tstat ${cls}${t.connected === false ? ' offline' : ''}" data-id="${t.id}">
         <div class="thead"><h3><span class="dot ${t.connected === false ? 'off' : 'on'}"></span><span>${t.name}</span></h3><span class="mode ${cls}">${mode === 'auto' ? 'Auto' : mode === 'heat' ? 'Heat' : mode === 'cool' ? 'Cool' : 'Off'}</span></div>
         <div class="tbody">
           <div class="big"><div class="cur">${deg(t.temp)}</div><div class="curl">Current</div></div>
@@ -659,10 +706,14 @@ async function climatePanel(d, root) {
             ${hold}
           </div>
         </div>
+        ${holdSel}
         <div class="sensors">${sensors}</div>
       </div>`;
     }).join('') + `<div class="src">Source: ${source === 'ecobee' ? 'ecobee portal (unofficial)' : source} · ${new Date().toLocaleTimeString()}</div>`;
+    wireSetpoints();
   };
+
+  const wireSetpoints = () => wireSetpointControls(root, d, refresh);
   // One-time "Connect ecobee" for accounts with SMS 2-step: relay texts the code, user types it here once.
   const relay = d.climateRelay.replace(/\/$/, ''), key = encodeURIComponent(d.solarKey || d.climateKey);
   const connectBox = (msg) => {
@@ -676,7 +727,7 @@ async function climatePanel(d, root) {
     if (/2-step|Connect ecobee|mfa/i.test(e.message)) return connectBox('Your ecobee account uses SMS 2-step verification. Send the code once and the relay stays signed in.');
     root.innerHTML = `<div class="ctl">Couldn't reach the thermostats (${e.message}).</div>`; return;
   }
-  climateTimer = setInterval(() => { if ($('#viewer').classList.contains('hidden')) return clearInterval(climateTimer); refresh().catch(() => {}); }, 30000);
+  climateTimer = setInterval(() => { if ($('#viewer').classList.contains('hidden')) return clearInterval(climateTimer); if (!root.querySelector('.sp.pending')) refresh().catch(() => {}); }, 30000);
 }
 
 // ---- Change a device password from the page and save it to the vault ----

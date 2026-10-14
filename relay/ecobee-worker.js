@@ -32,6 +32,10 @@ export default {
     try {
       if (url.pathname === '/thermostats') return Response.json({ at: new Date().toISOString(), source: 'ecobee', thermostats: await thermostats(env) }, { headers: cors });
       if (url.pathname === '/raw') return Response.json(await api(env, url.searchParams.get('path') || '/thermostat', url.searchParams.get('json')), { headers: cors });
+      // Setpoints: /set?id=<thermostat>&heat=68&cool=74[&hold=nextTransition|indefinite|2h]  — a hold overriding the schedule.
+      if (url.pathname === '/set') return Response.json(await setHold(env, url.searchParams), { headers: cors });
+      // Cancel the hold and go back to the schedule: /resume?id=<thermostat>
+      if (url.pathname === '/resume') { await tpost(env, { selection: { selectionType: 'thermostats', selectionMatch: url.searchParams.get('id') }, functions: [{ type: 'resumeProgram', params: { resumeAll: true } }] }); return Response.json({ ok: true }, { headers: cors }); }
       if (url.pathname === '/logout') { await env.STATE.delete('ecobee:token'); await env.STATE.delete('ecobee:refresh'); return Response.json({ ok: true }, { headers: cors }); }
       // One-time connect for SMS 2-step: /connect/start sends the text, /connect/finish?code=123456 completes it
       // and stores the refresh token so the relay never has to ask again.
@@ -131,6 +135,35 @@ async function api(env, path, json, retry = true) {
   const j = await r.json();
   if (!r.ok || (j.status && j.status.code !== 0)) throw new Error(`ecobee api ${r.status}: ${j.status?.message || JSON.stringify(j).slice(0, 200)}`);
   return j;
+}
+
+// ---- writes: POST /thermostat with "functions" (setHold / resumeProgram) ----
+async function tpost(env, body, retry = true) {
+  const t = await token(env);
+  const r = await fetch(`${API}/thermostat?format=json`, { method: 'POST', headers: { Authorization: 'Bearer ' + t, 'Content-Type': 'application/json', 'User-Agent': UA }, body: JSON.stringify(body) });
+  if (r.status === 401 && retry) { await token(env, true); return tpost(env, body, false); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || (j.status && j.status.code !== 0)) throw new Error(`ecobee write ${r.status}: ${j.status?.message || JSON.stringify(j).slice(0, 200)}`);
+  return j;
+}
+
+// Set heat/cool setpoints as a hold. ecobee needs both values and a minimum gap between them (heatCoolMinDelta),
+// so the missing one is taken from the thermostat and nudged if the gap is too small.
+async function setHold(env, q) {
+  const id = q.get('id'); if (!id) throw new Error('id missing');
+  const cur = (await api(env, '/thermostat', JSON.stringify({ selection: { selectionType: 'thermostats', selectionMatch: id, includeRuntime: true, includeSettings: true } }))).thermostatList[0];
+  if (!cur) throw new Error('thermostat not found');
+  const mode = cur.settings.hvacMode, delta = (cur.settings.heatCoolMinDelta || 50) / 10;
+  let heat = q.get('heat') != null ? +q.get('heat') : cur.runtime.desiredHeat / 10;
+  let cool = q.get('cool') != null ? +q.get('cool') : cur.runtime.desiredCool / 10;
+  if (mode === 'auto') { if (cool - heat < delta) { if (q.get('heat') != null) cool = heat + delta; else heat = cool - delta; } }
+  else if (mode === 'cool') { if (cool - heat < delta) heat = cool - delta; }
+  else if (mode === 'heat') { if (cool - heat < delta) cool = heat + delta; }
+  const hold = q.get('hold') || 'nextTransition';
+  const params = { heatHoldTemp: Math.round(heat * 10), coolHoldTemp: Math.round(cool * 10) };
+  if (/^\d+h$/.test(hold)) { params.holdType = 'holdHours'; params.holdHours = parseInt(hold); } else params.holdType = hold;
+  await tpost(env, { selection: { selectionType: 'thermostats', selectionMatch: id }, functions: [{ type: 'setHold', params }] });
+  return { ok: true, id, heat, cool, hold: params.holdType, mode };
 }
 
 // ---- door/window SmartSensors: not in the live thermostat object, but ecobee's 5-minute runtime report carries
