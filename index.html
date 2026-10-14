@@ -266,7 +266,8 @@ function show() {
   const rach = data.devices.find((x) => x.rachioKey);
   if (rach) { const sec = document.createElement('section'); sec.id = 'sprinklers'; main.appendChild(sec); rachioHome(rach.rachioKey, sec); }
   const groups = {};
-  for (const d of data.devices) (groups[d.group || 'Devices'] ||= []).push(d);
+  // The solar system is represented by the summary strip (its tiles open the Solar Assistant view), so it gets no grid tile.
+  for (const d of data.devices) if (!d.solarRelay) (groups[d.group || 'Devices'] ||= []).push(d);
   for (const [g, list] of Object.entries(groups)) {
     const h = document.createElement('h2'); h.className = 'sec'; h.textContent = g; main.appendChild(h);
     const grid = document.createElement('div'); grid.className = 'grid'; main.appendChild(grid);
