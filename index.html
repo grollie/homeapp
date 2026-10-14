@@ -77,7 +77,8 @@ h2.sec.sub{margin-top:14px}
 .summary{background:var(--panel);border:1px solid var(--accent);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow);margin-bottom:6px}
 .summary:empty,.summary .sgrid:empty{display:none}
 .sgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:8px}
-.stile{background:var(--bg);border-radius:10px;padding:8px 10px;min-width:0}
+.stile{background:var(--bg);border-radius:10px;padding:8px 10px;min-width:0;border:1px solid transparent;color:var(--text);text-align:left;cursor:pointer;font:inherit}
+.stile:hover{border-color:var(--accent)}
 .stile .sv{font-size:20px;font-weight:600;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .stile .sl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
 .stile .ss{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -605,9 +606,12 @@ async function summaryCard(root) {
   const solar = data.devices.find((x) => x.solarRelay), clim = data.devices.find((x) => x.climateRelay);
   if (!solar && !clim) { root.remove(); return; }
   const kW = (w) => (Math.abs(w) >= 1000 ? (w / 1000).toFixed(2) + ' kW' : Math.round(w) + ' W');
-  const tile = (label, val, cls = '', sub = '') => `<div class="stile ${cls}"><div class="sv">${val}</div><div class="sl">${label}</div>${sub ? `<div class="ss">${sub}</div>` : ''}</div>`;
+  // Each summary tile drills down: solar/battery/MPPT tiles open the Solar view, indoor/outside open Thermostats.
+  let target = 'solar';
+  const tile = (label, val, cls = '', sub = '') => `<button class="stile ${cls}" data-open="${target}" title="Open ${target === 'solar' ? 'Solar Assistant' : 'Thermostats'}"><div class="sv">${val}</div><div class="sl">${label}</div>${sub ? `<div class="ss">${sub}</div>` : ''}</button>`;
   const refresh = async () => {
     const parts = [];
+    target = 'solar';
     if (solar) {
       try {
         const key = encodeURIComponent(solar.solarKey);
@@ -639,6 +643,7 @@ async function summaryCard(root) {
       } catch (e) { parts.push(tile('Solar', 'offline', 'bad', e.message)); }
     }
     if (clim) {
+      target = 'climate';
       try {
         const r = await fetch(`${clim.climateRelay.replace(/\/$/, '')}/thermostats?k=${encodeURIComponent(clim.solarKey || clim.climateKey)}`).then((r) => r.json());
         if (r.thermostats && r.thermostats.length) {
@@ -650,6 +655,7 @@ async function summaryCard(root) {
       } catch {}
     }
     root.querySelector('.sgrid').innerHTML = parts.join('');
+    for (const b of root.querySelectorAll('.stile')) b.onclick = () => { const dev = b.dataset.open === 'climate' ? clim : solar; if (dev) openDevice(dev); };
   };
   refresh().catch(() => {});
   summaryTimer = setInterval(() => { if (!document.body.contains(root)) return clearInterval(summaryTimer); refresh().catch(() => {}); }, 30000);
