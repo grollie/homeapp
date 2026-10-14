@@ -32,13 +32,25 @@ header h1{font-size:18px;margin:0;flex:1}
 header .who{color:var(--muted);font-size:14px}
 main{padding:16px;max-width:1200px;margin:0 auto}
 .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
-.tile{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;text-align:left;display:flex;flex-direction:column;gap:6px;box-shadow:var(--shadow);min-height:110px}
+.tile{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:14px;text-align:left;display:flex;flex-direction:column;gap:6px;box-shadow:var(--shadow);min-height:110px}
 .tile:hover{border-color:var(--accent)}
 .tile .ic{font-size:26px;line-height:1}
 .tile .nm{font-weight:600}
 .tile .sub{font-size:12px;color:var(--muted)}
 .tile .badge{font-size:11px;color:var(--muted);margin-top:auto}
 h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 10px}
+/* condensed climate on the home page */
+.tile.mini{min-height:0;gap:4px;border-left:4px solid #8a929c}
+.tile.mini.heat{border-left-color:#e8702a}.tile.mini.cool{border-left-color:#2f8be6}.tile.mini.auto{border-left-color:#2e8b57}
+.tile.mini.offline{opacity:.5}
+.mrow{display:flex;justify-content:space-between;align-items:center;gap:6px}
+.mmode{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#fff;background:#8a929c;padding:2px 7px;border-radius:999px}
+.mmode.heat{background:#e8702a}.mmode.cool{background:#2f8be6}.mmode.auto{background:#2e8b57}
+.mtemps{display:flex;align-items:baseline;gap:8px}.mtemps b{font-size:26px;font-weight:300;letter-spacing:-1px}.mtemps small{font-size:13px;color:var(--muted)}
+.mdoors{display:flex;align-items:center;gap:4px;margin-top:2px}
+.mdoors i{width:8px;height:8px;border-radius:50%;background:#2e8b57;display:inline-block}.mdoors i.open{background:var(--danger)}
+.mdoors small{font-size:11px;color:var(--muted);margin-left:4px}
+.sprstatus b.bad{color:var(--danger)}
 /* sprinklers on the home page */
 .sprhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:22px}
 .sprhead h2.sec{margin:0;flex:1 1 220px;display:flex;align-items:center;gap:8px}
@@ -234,6 +246,9 @@ function show() {
   // "Today at a glance" summary card, fed by the live relays; sits above the tile groups.
   const sum = document.createElement('div'); sum.id = 'summary'; sum.className = 'summary'; sum.innerHTML = '<div class="sgrid"></div>'; main.appendChild(sum);
   summaryCard(sum);
+  // Condensed climate view on the home page: one small tile per thermostat plus every door's state.
+  const clim = data.devices.find((x) => x.climateRelay);
+  if (clim) { const sec = document.createElement('section'); sec.id = 'climate'; main.appendChild(sec); climateHome(clim, sec); }
   // Sprinkler controller lives on the home page: a tile per zone (run for N minutes), a tile per schedule (start).
   const rach = data.devices.find((x) => x.rachioKey);
   if (rach) { const sec = document.createElement('section'); sec.id = 'sprinklers'; main.appendChild(sec); rachioHome(rach.rachioKey, sec); }
@@ -425,6 +440,40 @@ async function solarPanel(d, root) {
   };
   try { await refresh(); } catch (e) { root.innerHTML = `<div class="ctl">Couldn't reach Solar Assistant (${e.message}).</div>`; return; }
   solarTimer = setInterval(() => { if ($('#viewer').classList.contains('hidden')) return clearInterval(solarTimer); refresh().catch(() => {}); }, 10000);
+}
+
+// ---- Condensed climate on the home page: thermostat mini-tiles + door chips; click a tile for the full view ----
+let climateHomeTimer = null;
+async function climateHome(d, root) {
+  clearInterval(climateHomeTimer);
+  const deg = (x) => (x == null ? '—' : `${Math.round(x)}°`);
+  const refresh = async () => {
+    const r = await fetch(`${d.climateRelay.replace(/\/$/, '')}/thermostats?k=${encodeURIComponent(d.solarKey || d.climateKey)}`);
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || 'relay ' + r.status);
+    const ts = body.thermostats || [];
+    const doors = ts.flatMap((t) => t.sensors.filter((s) => s.open != null).map((s) => ({ ...s, room: t.name })));
+    const openDoors = doors.filter((s) => s.open), outside = (ts.find((t) => t.outside) || {}).outside;
+    const tiles = ts.map((t) => {
+      const mode = (t.mode || 'off').toLowerCase();
+      const run = t.running.some((x) => /cool/i.test(x)) ? '❄ cooling' : t.running.some((x) => /heat/i.test(x)) ? '🔥 heating' : t.running.length ? '🌀 fan' : 'idle';
+      const set = mode === 'auto' ? `${deg(t.heatSet)}–${deg(t.coolSet)}` : mode === 'heat' ? deg(t.heatSet) : mode === 'cool' ? deg(t.coolSet) : 'off';
+      const myDoors = t.sensors.filter((s) => s.open != null);
+      return `<button class="tile mini ${mode}${t.connected === false ? ' offline' : ''}" data-name="${t.name.replace(/"/g, '&quot;')}">
+        <span class="mrow"><span class="nm">${t.name}</span><span class="mmode ${mode}">${mode}</span></span>
+        <span class="mtemps"><b>${deg(t.temp)}</b><small>→ ${set}</small></span>
+        <span class="sub">${t.humidity != null ? t.humidity + '% · ' : ''}${run}${t.hold ? ' · hold' : ''}</span>
+        ${myDoors.length ? `<span class="mdoors">${myDoors.map((s) => `<i class="${s.open ? 'open' : ''}" title="${s.name}: ${s.open ? 'open' : 'closed'}"></i>`).join('')}<small>${myDoors.filter((s) => s.open).length ? myDoors.filter((s) => s.open).map((s) => s.name).join(', ') + ' open' : 'doors closed'}</small></span>` : ''}
+      </button>`;
+    }).join('');
+    root.innerHTML = `<div class="sprhead"><h2 class="sec">Climate${outside ? ` <span class="sprstatus">· outside ${deg(outside.temp)} ${outside.condition || ''}</span>` : ''}</h2>
+        <div class="sprstatus">${doors.length ? (openDoors.length ? `<b class="bad">${openDoors.length} door${openDoors.length > 1 ? 's' : ''} open</b>: ${openDoors.map((s) => s.name).join(', ')}` : 'All doors closed') + ` · as of ${(doors[0].asOf || '').slice(11, 16)}` : ''}</div></div>
+      <div class="grid minis">${tiles}</div>
+      ${doors.length ? `<div class="dstrip">${doors.map((s) => `<span class="dchip ${s.open ? 'open' : 'closed'}" title="${s.room}"><i></i>${s.name}<b>${s.open ? 'Open' : 'Closed'}</b></span>`).join('')}</div>` : ''}`;
+    for (const b of root.querySelectorAll('.tile.mini')) b.onclick = () => openDevice(d);
+  };
+  try { await refresh(); } catch (e) { root.innerHTML = `<h2 class="sec">Climate</h2><div class="muted small">${/2-step|Connect ecobee|mfa/i.test(e.message) ? 'ecobee needs connecting — open the Thermostats tile.' : `Couldn't reach the thermostats (${e.message}).`}</div>`; }
+  climateHomeTimer = setInterval(() => { if (!document.body.contains(root)) return clearInterval(climateHomeTimer); if ($('#viewer').classList.contains('hidden')) refresh().catch(() => {}); }, 30000);
 }
 
 // ---- Sprinklers on the home page: zone tiles with a manual run time, schedule tiles that can be started ----
