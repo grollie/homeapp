@@ -39,6 +39,24 @@ main{padding:16px;max-width:1200px;margin:0 auto}
 .tile .sub{font-size:12px;color:var(--muted)}
 .tile .badge{font-size:11px;color:var(--muted);margin-top:auto}
 h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 10px}
+/* sprinklers on the home page */
+.sprhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:22px}
+.sprhead h2.sec{margin:0;flex:1 1 220px;display:flex;align-items:center;gap:8px}
+.sprstatus{font-size:13px;color:var(--muted)}.sprstatus b{color:var(--text)}
+.spracts{display:flex;gap:6px}.sprmsg{flex-basis:100%;font-size:13px;color:var(--muted);min-height:0}
+h2.sec.sub{margin-top:14px}
+.tile.zone,.tile.sched{min-height:0;cursor:default}
+.tile.zone:hover,.tile.sched:hover{border-color:var(--line)}
+.tile.zone.running{border-color:#2f8be6;background:color-mix(in srgb,#2f8be6 10%,var(--panel))}
+.tile.sched.off{opacity:.7}
+.zctl{display:flex;align-items:center;gap:6px;margin-top:auto;padding-top:6px}
+.zctl input{width:56px;padding:5px 6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:14px;text-align:center}
+.zctl .unit{font-size:12px;color:var(--muted)}
+.zctl .btn.small{margin-left:auto}
+.zrun{font-size:14px;color:#2f8be6;font-weight:600;margin-top:auto;padding-top:6px}
+.btn.small.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.muted.small{font-size:13px;color:var(--muted)}
 /* dashboard summary strip */
 .summary{background:var(--panel);border:1px solid var(--accent);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow);margin-bottom:6px}
 .summary:empty,.summary .sgrid:empty{display:none}
@@ -216,6 +234,9 @@ function show() {
   // "Today at a glance" summary card, fed by the live relays; sits above the tile groups.
   const sum = document.createElement('div'); sum.id = 'summary'; sum.className = 'summary'; sum.innerHTML = '<div class="sgrid"></div>'; main.appendChild(sum);
   summaryCard(sum);
+  // Sprinkler controller lives on the home page: a tile per zone (run for N minutes), a tile per schedule (start).
+  const rach = data.devices.find((x) => x.rachioKey);
+  if (rach) { const sec = document.createElement('section'); sec.id = 'sprinklers'; main.appendChild(sec); rachioHome(rach.rachioKey, sec); }
   const groups = {};
   for (const d of data.devices) (groups[d.group || 'Devices'] ||= []).push(d);
   for (const [g, list] of Object.entries(groups)) {
@@ -404,6 +425,84 @@ async function solarPanel(d, root) {
   };
   try { await refresh(); } catch (e) { root.innerHTML = `<div class="ctl">Couldn't reach Solar Assistant (${e.message}).</div>`; return; }
   solarTimer = setInterval(() => { if ($('#viewer').classList.contains('hidden')) return clearInterval(solarTimer); refresh().catch(() => {}); }, 10000);
+}
+
+// ---- Sprinklers on the home page: zone tiles with a manual run time, schedule tiles that can be started ----
+let rachioHomeTimer = null;
+async function rachioHome(key, root) {
+  clearInterval(rachioHomeTimer);
+  const api = async (path, method = 'GET', body) => {
+    const r = await fetch('https://api.rach.io/1/public/' + path, { method, headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
+    if (!r.ok) throw new Error('Rachio ' + r.status);
+    return r.status === 204 ? null : r.json().catch(() => null);
+  };
+  const ago = (ms) => { if (!ms) return 'never'; const d = (Date.now() - ms) / 864e5; return d < 1 ? 'today' : d < 2 ? 'yesterday' : Math.floor(d) + ' days ago'; };
+  const mins = (s) => Math.max(1, Math.round(s / 60));
+  const pref = (id, dflt) => { try { return +localStorage.getItem('zone-min:' + id) || dflt; } catch { return dflt; } };
+  const remember = (id, m) => { try { localStorage.setItem('zone-min:' + id, m); } catch {} };
+  root.innerHTML = '<h2 class="sec">Sprinklers</h2><div class="muted small">Loading Rachio…</div>';
+  let devices = [];
+  try {
+    const me = await api('person/info'), person = await api('person/' + me.id);
+    const year = 365 * 864e5;
+    devices = person.devices.filter((d) => d.status === 'ONLINE' || d.zones.some((z) => z.lastWateredDate > Date.now() - year));
+  } catch (e) { root.innerHTML = `<h2 class="sec">Sprinklers</h2><div class="muted small">Couldn't reach Rachio (${e.message}).</div>`; return; }
+
+  const render = (cur) => {
+    root.innerHTML = '';
+    for (const dev of devices) {
+      const online = dev.status === 'ONLINE';
+      const running = cur[dev.id] && cur[dev.id].zoneId ? cur[dev.id] : null;
+      const rain = dev.rainDelayExpirationDate > Date.now() ? `rain delay until ${new Date(dev.rainDelayExpirationDate).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : '';
+      const head = document.createElement('div'); head.className = 'sprhead';
+      head.innerHTML = `<h2 class="sec"><span class="dot ${online ? 'on' : 'off'}"></span> Sprinklers · ${dev.name}</h2><div class="sprstatus">${running ? `💧 Watering <b>${(dev.zones.find((z) => z.id === running.zoneId) || {}).name || 'zone'}</b> — <span class="remain" data-end="${new Date(running.zoneStartDate).getTime() + running.duration * 1000}"></span> left` : online ? 'Idle' : 'Offline'}${rain ? ' · ' + rain : ''}</div><div class="spracts"><button class="btn small stopall"${running ? '' : ' disabled'}>Stop watering</button><button class="btn small rain">${dev.rainDelayExpirationDate > Date.now() ? 'Clear rain delay' : 'Rain delay 24h'}</button></div><div class="msg sprmsg"></div>`;
+      root.appendChild(head);
+      const msg = head.querySelector('.sprmsg');
+      const say = async (fn, ok) => { try { await fn(); msg.textContent = ok; setTimeout(poll, 1500); } catch (e) { msg.textContent = e.message; } };
+      head.querySelector('.stopall').onclick = () => say(() => api('device/stop_water', 'PUT', { id: dev.id }), 'Stopped.');
+      head.querySelector('.rain').onclick = () => dev.rainDelayExpirationDate > Date.now()
+        ? say(async () => { await api('device/rain_delay', 'PUT', { id: dev.id, duration: 0 }); dev.rainDelayExpirationDate = 0; }, 'Rain delay cleared.')
+        : say(async () => { await api('device/rain_delay', 'PUT', { id: dev.id, duration: 86400 }); dev.rainDelayExpirationDate = Date.now() + 864e5; }, 'Rain delay set for 24 hours.');
+
+      // zone tiles
+      const grid = document.createElement('div'); grid.className = 'grid zones'; root.appendChild(grid);
+      for (const z of dev.zones.filter((z) => z.enabled).sort((a, b) => a.zoneNumber - b.zoneNumber)) {
+        const isRun = running && running.zoneId === z.id, dflt = pref(z.id, mins(z.runtime || 600));
+        const t = document.createElement('div'); t.className = 'tile zone' + (isRun ? ' running' : '');
+        t.innerHTML = `<span class="ic">${isRun ? '💧' : '🌱'}</span><span class="nm"></span><span class="sub">Zone ${z.zoneNumber} · last run ${ago(z.lastWateredDate)}</span>
+          ${isRun ? `<span class="zrun"><span class="remain" data-end="${new Date(running.zoneStartDate).getTime() + running.duration * 1000}"></span> left</span><button class="btn small stop">Stop</button>`
+                  : `<span class="zctl"><input type="number" min="1" max="180" value="${dflt}"><span class="unit">min</span><button class="btn small primary run"${online ? '' : ' disabled'}>Run</button></span>`}`;
+        t.querySelector('.nm').textContent = z.name;
+        if (isRun) t.querySelector('.stop').onclick = () => say(() => api('device/stop_water', 'PUT', { id: dev.id }), `Stopped ${z.name}.`);
+        else t.querySelector('.run').onclick = () => { const m = Math.min(180, Math.max(1, +t.querySelector('input').value || dflt)); remember(z.id, m); say(() => api('zone/start', 'PUT', { id: z.id, duration: m * 60 }), `Running ${z.name} for ${m} min.`); };
+        grid.appendChild(t);
+      }
+
+      // schedule tiles
+      const scheds = [...(dev.scheduleRules || []).map((s) => ({ ...s, kind: 'fixed' })), ...(dev.flexScheduleRules || []).map((s) => ({ ...s, kind: 'flex' }))];
+      if (scheds.length) {
+        const h = document.createElement('h2'); h.className = 'sec sub'; h.textContent = 'Schedules'; root.appendChild(h);
+        const sg = document.createElement('div'); sg.className = 'grid scheds'; root.appendChild(sg);
+        for (const s of scheds) {
+          const t = document.createElement('div'); t.className = 'tile sched' + (s.enabled ? '' : ' off');
+          t.innerHTML = `<span class="ic">${s.kind === 'flex' ? '🧠' : '📅'}</span><span class="nm"></span><span class="sub">${s.summary || (s.kind === 'flex' ? 'Flex daily — waters when the soil needs it' : '')}</span><span class="sub">${mins(s.totalDuration || 0)} min total · ${s.enabled ? 'enabled' : 'disabled'}</span><span class="zctl"><button class="btn small primary start"${online ? '' : ' disabled'}>Start now</button></span>`;
+          t.querySelector('.nm').textContent = s.name;
+          t.querySelector('.start').onclick = () => say(() => api('schedulerule/start', 'PUT', { id: s.id }), `Started "${s.name}".`);
+          sg.appendChild(t);
+        }
+      }
+    }
+    tick();
+  };
+  const tick = () => { for (const el of root.querySelectorAll('.remain')) { const left = Math.max(0, +el.dataset.end - Date.now()); el.textContent = `${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, '0')}`; } };
+  const poll = async () => {
+    const cur = {};
+    await Promise.all(devices.map(async (d) => { try { cur[d.id] = await api(`device/${d.id}/current_schedule`); } catch { cur[d.id] = null; } }));
+    render(cur);
+  };
+  await poll();
+  rachioHomeTimer = setInterval(() => { if (!document.body.contains(root)) return clearInterval(rachioHomeTimer); tick(); }, 1000);
+  setInterval(() => { if (document.body.contains(root) && $('#viewer').classList.contains('hidden')) poll().catch(() => {}); }, 15000);
 }
 
 // ---- Dashboard summary: solar now + peak + energy, batteries + runtime, MPPT health, indoor temps ----
