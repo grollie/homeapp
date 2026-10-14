@@ -435,7 +435,7 @@ async function solarPanel(d, root) {
       const fault = mppts.length > 1 && mppts.some((x) => x.w <= 5) && mppts.some((x) => x.w > 100);
       const rec = (today && today.sites && today.sites[s.id]) || {};
       const mp = mppts.map((x, k) => { const dead = fault && x.w <= 5; const pk = rec.mppt && rec.mppt[x.t]; return `<span class="mppt${dead ? ' dead' : ''}" title="${x.volts} V · ${x.amps} A${pk && pk.w ? `\npeak today ${kW(pk.w)} at ${tAt(pk.at)}` : ''}">MPPT ${k + 1}: <b>${kW(x.w)}</b>${dead ? ' ⚠' : ''}${pk && pk.w ? `<small class="pk"> · peak ${kW(pk.w)}</small>` : ''}</span>`; }).join('');
-      el.querySelector('.stats').innerHTML = row(pv, load, soc, batt, grid) + stat('Peak solar today', peakOf(rec.pv), 'pv') + (rec.pvEnergy ? stat('Solar today', `${rec.pvEnergy.toFixed(1)} kWh`, 'pv') : '') + (rt ? stat(`Runtime to ${reserve}%`, rt, 'run') : '');
+      el.querySelector('.stats').innerHTML = row(pv, load, soc, batt, grid) + stat('Peak solar today', peakOf(rec.pv), 'pv') + (rec.pvEnergy != null ? stat('Solar today', `${rec.pvEnergy.toFixed(1)} kWh${rec.pvForecast ? `<small class="pk-at"> of ~${Math.round(rec.pvForecast)} forecast</small>` : ''}`, 'pv') : '') + (rt ? stat(`Runtime to ${reserve}%`, rt, 'run') : '');
       el.querySelector('.mppts').innerHTML = mp;
       el.classList.toggle('alert', fault);
       const box = el.querySelector('.alertbox'); box.classList.toggle('hidden', !fault);
@@ -449,8 +449,9 @@ async function solarPanel(d, root) {
     const soc = tot.soc.length ? tot.soc.reduce((a, b) => a + b, 0) / tot.soc.length : 0;
     // Banks aren't shared between sites, so the house runs until the first bank empties.
     const all = runs.filter(Boolean), rtAll = all.length ? fmtRun({ hours: Math.min(...all.map((r) => r.hours)) }) : null;
-    const sumEnergy = today && today.sites ? Object.values(today.sites).reduce((a, r) => a + (r.pvEnergy || 0), 0) : 0;
-    root.querySelector('.sum .stats').innerHTML = row(tot.pv, tot.load, soc, tot.batt, tot.grid, 'Battery avg') + stat('Peak solar today', peakOf(today && today.both), 'pv') + (sumEnergy ? stat('Solar today', `${sumEnergy.toFixed(1)} kWh`, 'pv') : '') + (rtAll ? stat(`Runtime to ${reserve}% (first bank)`, rtAll, 'run') : '');
+    const recs = today && today.sites ? Object.values(today.sites) : [];
+    const sumEnergy = recs.reduce((a, r) => a + (r.pvEnergy || 0), 0), sumForecast = recs.reduce((a, r) => a + (r.pvForecast || 0), 0);
+    root.querySelector('.sum .stats').innerHTML = row(tot.pv, tot.load, soc, tot.batt, tot.grid, 'Battery avg') + stat('Peak solar today', peakOf(today && today.both), 'pv') + (recs.length ? stat('Solar today', `${sumEnergy.toFixed(1)} kWh${sumForecast ? `<small class="pk-at"> of ~${Math.round(sumForecast)} forecast</small>` : ''}`, 'pv') : '') + (rtAll ? stat(`Runtime to ${reserve}% (first bank)`, rtAll, 'run') : '');
   };
   try { await refresh(); } catch (e) { root.innerHTML = `<div class="ctl">Couldn't reach Solar Assistant (${e.message}).</div>`; return; }
   solarTimer = setInterval(() => { if ($('#viewer').classList.contains('hidden')) return clearInterval(solarTimer); refresh().catch(() => {}); }, 10000);
@@ -628,11 +629,12 @@ async function summaryCard(root) {
           const strings = Object.keys(mm).filter((t) => /^inverter_\d+\/pv_power_\d+$/.test(t)).map(v);
           if (strings.length > 1 && strings.some((w) => w <= 5) && strings.some((w) => w > 100)) faults.push(s.description || s.name);
         }
-        const peak = m.today && m.today.both, energy = m.today && m.today.sites ? Object.values(m.today.sites).reduce((a, r) => a + (r.pvEnergy || 0), 0) : 0;
+        const peak = m.today && m.today.both, recs = m.today && m.today.sites ? Object.values(m.today.sites) : [];
+        const energy = recs.reduce((a, r) => a + (r.pvEnergy || 0), 0), forecast = recs.reduce((a, r) => a + (r.pvForecast || 0), 0);
         const avgSoc = soc.length ? soc.reduce((a, c) => a + c, 0) / soc.length : null;
         parts.push(tile('Solar now', kW(pv), 'pv'));
         parts.push(tile('Peak today', peak && peak.w ? kW(peak.w) : '—', 'pv', peak && peak.w ? new Date(peak.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''));
-        if (energy) parts.push(tile('Solar today', `${energy.toFixed(1)} kWh`, 'pv'));
+        if (recs.length) parts.push(tile('Solar today', `${energy.toFixed(1)} kWh`, 'pv', forecast ? `of ~${Math.round(forecast)} kWh forecast` : ''));
         parts.push(tile('Load', kW(load)));
         parts.push(tile('Batteries', avgSoc == null ? '—' : `${avgSoc.toFixed(0)}%`, 'soc', batt >= 0 ? `charging ${kW(batt)}` : `discharging ${kW(-batt)}`));
         if (b && b.devices && batt < 0) {

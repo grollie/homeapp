@@ -86,8 +86,11 @@ async function trackPeaks(env, sites) {
       const w = v(t), cur = rec.mppt[t];
       if (!cur || w > cur.w) { rec.mppt[t] = { w, at: now }; changed = true; }
     }
-    // Daily energy from Solar Assistant's own counter (resets at its midnight); shown live, persisted every 10 min.
-    rec.pvEnergy = v('total/pv_energy'); rec.loadEnergy = v('total/load_energy');
+    // Today's energy: total/pv_energy is a running meter across days, so use the forecast module's "generated
+    // today" plus its "remaining today" for the day's expected total. Shown live, persisted every 30 min.
+    rec.pvEnergy = v('weather/pv_energy_generated');
+    rec.pvForecast = rec.pvEnergy + v('weather/pv_energy_remaining_today');
+    rec.pvMeter = v('total/pv_energy'); rec.loadMeter = v('total/load_energy');
   }
   if (allOk && totalPv > st.both.w) { st.both = { w: totalPv, at: now }; changed = true; }
   if (energyDue) { st.energyAt = ms; changed = true; }
