@@ -107,6 +107,13 @@ h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--
 .occ{width:9px;height:9px;border-radius:50%;background:var(--line);display:inline-block}.occ.on{background:#2e8b57;box-shadow:0 0 0 3px rgba(46,139,87,.25)}
 .door{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;color:#fff;background:#2e8b57}.door.open{background:var(--danger)}
 .src{font-size:12px;color:var(--muted);text-align:right;padding:4px 2px}
+/* thermostat overview card */
+.tsum .st.cool .sv{color:#2f8be6}.tsum .st.heat .sv{color:#e8702a}.tsum .st.bad .sv{color:var(--danger)}.tsum .st.good .sv{color:#2e8b57}
+.tsum .st .sv{font-size:17px;white-space:normal}
+.dstrip{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;align-items:center}
+.dchip{display:inline-flex;align-items:center;gap:7px;padding:4px 10px;border-radius:8px;background:var(--bg);border:1px solid var(--line);font-size:13px}
+.dchip i{width:9px;height:9px;border-radius:50%;background:#2e8b57}.dchip.open i{background:var(--danger)}
+.dchip b{font-size:11px;color:var(--muted);font-weight:600}.dchip.open{border-color:var(--danger)}.dchip.open b{color:var(--danger)}
 .connect p.muted{color:var(--muted);font-size:14px;margin:4px 0 10px}
 .connect input{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);width:200px;font-size:16px;letter-spacing:2px}
 .connect button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
@@ -468,7 +475,24 @@ async function climatePanel(d, root) {
     const body = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(body.error || 'relay ' + r.status);
     const { thermostats, source } = body;
-    root.innerHTML = thermostats.map((t) => {
+    // Overview card, like the solar "Both systems" card: house averages, what's running, every door at a glance.
+    const stat = (label, val, cls = '') => `<div class="st ${cls}"><div class="sv">${val}</div><div class="sl">${label}</div></div>`;
+    const live = thermostats.filter((t) => t.connected !== false);
+    const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
+    const avgT = avg(live.map((t) => t.temp).filter((x) => x != null)), avgH = avg(live.map((t) => t.humidity).filter((x) => x != null));
+    const cooling = live.filter((t) => t.running.some((x) => /cool/i.test(x))).map((t) => t.name), heating = live.filter((t) => t.running.some((x) => /heat/i.test(x) && !/cool/i.test(x))).map((t) => t.name);
+    const fanOnly = live.filter((t) => t.running.length && !cooling.includes(t.name) && !heating.includes(t.name)).map((t) => t.name);
+    const doors = thermostats.flatMap((t) => t.sensors.filter((s) => s.open != null).map((s) => ({ ...s, room: t.name })));
+    const openDoors = doors.filter((s) => s.open), occupied = thermostats.flatMap((t) => t.sensors.filter((s) => s.occupied)).map((s) => s.name);
+    const outside = (thermostats.find((t) => t.outside) || {}).outside;
+    const asOf = doors.length ? doors[0].asOf : null;
+    const dchip = (s) => `<span class="dchip ${s.open ? 'open' : 'closed'}" title="${s.room} · as of ${s.asOf || '—'}"><i></i>${s.name}<b>${s.open ? 'Open' : 'Closed'}</b></span>`;
+    const overview = `<div class="ctl sum tsum${openDoors.length ? ' alert' : ''}"><h3>🌡️ All thermostats</h3><div class="stats">
+        ${stat('Indoor avg', deg(avgT))}${stat('Humidity avg', avgH == null ? '—' : Math.round(avgH) + '%')}${outside ? stat('Outside', `${deg(outside.temp)}<small class="pk-at"> ${outside.condition || ''}</small>`) : ''}
+        ${stat('Cooling', cooling.length ? cooling.join(', ') : 'none', cooling.length ? 'cool' : '')}${stat('Heating', heating.length ? heating.join(', ') : 'none', heating.length ? 'heat' : '')}${fanOnly.length ? stat('Fan only', fanOnly.join(', ')) : ''}
+        ${stat('Occupied', occupied.length ? `${occupied.length} <small class="pk-at">${occupied.join(', ')}</small>` : 'nobody', occupied.length ? 'soc' : '')}${doors.length ? stat('Doors open', openDoors.length ? `${openDoors.length} <small class="pk-at">${openDoors.map((s) => s.name).join(', ')}</small>` : 'none', openDoors.length ? 'bad' : 'good') : ''}
+      </div>${doors.length ? `<div class="dstrip">${doors.map(dchip).join('')}<span class="bsum">door sensors as of ${asOf ? asOf.slice(11, 16) : '—'} (ecobee reports them 5–15 min behind)</span></div>` : ''}</div>`;
+    root.innerHTML = overview + thermostats.map((t) => {
       const mode = (t.mode || 'off').toLowerCase(), cls = modeCls[mode] || 'off';
       const set = mode === 'auto' ? `<span class="sp heat">${deg(t.heatSet)}</span><span class="sep">–</span><span class="sp cool">${deg(t.coolSet)}</span>`
         : mode === 'heat' ? `<span class="sp heat">${deg(t.heatSet)}</span>` : mode === 'cool' ? `<span class="sp cool">${deg(t.coolSet)}</span>` : '<span class="sp off">Off</span>';

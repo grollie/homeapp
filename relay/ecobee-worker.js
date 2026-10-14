@@ -133,11 +133,40 @@ async function api(env, path, json, retry = true) {
   return j;
 }
 
+// ---- door/window SmartSensors: not in the live thermostat object, but ecobee's 5-minute runtime report carries
+// them as "dryContact" columns (1 = closed/normal, 0 = open), typically 5–15 min behind. Cached 2 min per isolate.
+const TZ = 'America/New_York';
+const localDate = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+let doorCache = { at: 0, byThermostat: {} };
+async function doorSensors(env, ids) {
+  if (Date.now() - doorCache.at < 120e3) return doorCache.byThermostat;
+  // the report's date range is interpreted in UTC (rows come back in thermostat local time), so ask in UTC
+  const now = new Date(), end = now.toISOString().slice(0, 10), start = new Date(now.getTime() - 864e5).toISOString().slice(0, 10);
+  const sel = { startDate: start, endDate: end, columns: 'zoneHvacMode', selection: { selectionType: 'thermostats', selectionMatch: ids.join(',') }, includeSensors: true };
+  const out = {};
+  try {
+    const j = await api(env, '/runtimeReport', JSON.stringify(sel));
+    for (const s of j.sensorList || []) {
+      const cols = s.columns || [], names = Object.fromEntries((s.sensors || []).map((x) => [x.sensorId, x]));
+      const dw = cols.map((c, i) => ({ c, i })).filter((x) => /^dw:/.test(x.c) && names[x.c] && names[x.c].sensorType === 'dryContact');
+      if (!dw.length) continue;
+      // last row where a dry-contact column has a value
+      let last = null;
+      for (let r = s.data.length - 1; r >= 0 && !last; r--) { const f = s.data[r].split(','); if (dw.some((x) => f[x.i] !== '')) last = f; }
+      if (!last) continue;
+      out[s.thermostatIdentifier] = dw.map((x) => ({ id: x.c, name: names[x.c].sensorName, type: 'door', open: last[x.i] === '0', asOf: `${last[0]} ${last[1]}` }));
+    }
+    doorCache = { at: Date.now(), byThermostat: out };
+  } catch (e) { /* keep last good cache; doors just won't update this round */ }
+  return doorCache.byThermostat;
+}
+
 // ---- normalise ecobee's thermostat object into the climate shape the page renders ----
 async function thermostats(env) {
   const sel = { selection: { selectionType: 'registered', selectionMatch: '', includeRuntime: true, includeSensors: true, includeSettings: true, includeEvents: true, includeEquipmentStatus: true, includeWeather: true, includeProgram: true } };
   const j = await api(env, '/thermostat', JSON.stringify(sel));
   const f = (x) => (x == null ? null : Math.round(x) / 10);                 // ecobee sends °F ×10
+  const doors = await doorSensors(env, (j.thermostatList || []).map((t) => t.identifier));
   return (j.thermostatList || []).map((t) => {
     const rt = t.runtime || {}, st = t.settings || {};
     const hold = (t.events || []).find((e) => e.running && e.type === 'hold');
@@ -158,7 +187,7 @@ async function thermostats(env) {
       hold: hold ? { name: hold.name, until: hold.endDate ? `${hold.endDate} ${hold.endTime}` : null, heat: f(hold.heatHoldTemp), cool: f(hold.coolHoldTemp) } : null,
       climate: ((t.program || {}).currentClimateRef) || null,
       outside: wx.temperature != null ? { temp: f(wx.temperature), condition: wx.condition } : null,
-      sensors,
+      sensors: sensors.concat((doors[t.identifier] || []).map((d) => ({ ...d, temp: null, occupied: null, inUse: true }))),
     };
   });
 }

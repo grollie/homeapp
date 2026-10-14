@@ -113,11 +113,11 @@ Home Assistant via HomeKit does). Temperatures are °F.
 
 ## Remaining tasks
 
-- [x] **ecobee (stop-gap): live** since 2026-10-08 — 2-step verification turned off on the ecobee account (Auth0 client disallows every MFA grant), `ECOBEE_PASSWORD` set as a worker secret, refresh token held in KV. 4 thermostats + 4 remote sensors. ecobee's API returns **no door/window SmartSensors** — those still need the Home Assistant route.
-- [ ] **ecobee (proper): Home Assistant bridge** — pick the box (Pi / mini PC / VM / HA Green), thermostat models +
+- [x] **ecobee (stop-gap): live** since 2026-10-08 — 2-step verification turned off on the ecobee account (Auth0 client disallows every MFA grant), `ECOBEE_PASSWORD` set as a worker secret, refresh token held in KV. 4 thermostats + 4 remote sensors + 6 door/window SmartSensors (read from ecobee's 5-minute runtime report, 5–15 min behind real time).
+- [ ] **ecobee (proper, optional): Home Assistant bridge** — only needed for real-time door state or if ecobee breaks the portal login — pick the box (Pi / mini PC / VM / HA Green), thermostat models +
       HomeKit setup codes (unpair from Apple Home first), remote access (Cloudflare Tunnel needs a domain; or
       DuckDNS + FortiGate VIP), room/sensor names. Then build `ha-relay` producing the climate shape and switch
-      the Thermostats tile's `climateRelay` to it. Door/window SmartSensors only become visible on this route.
+      the Thermostats tile's `climateRelay` to it. Door sensors already show via the runtime report; HA would make them real-time.
 - [ ] **Vault logins still missing:** Garage Doors (myQ), Matic.
 - [ ] **More batteries:** append new Virtual IDs to `batteries` on the Solar Assistant tile (per site).
 - [ ] **Tuya trial plan:** renew at iot.tuya.com when the battery chips go blank.
