@@ -27,7 +27,7 @@ export default {
     try {
       if (url.pathname === '/metrics') {
         const sites = await allMetrics(env, url.searchParams.has('fresh'));
-        const today = await trackPeaks(env, sites);
+        const today = await trackPeaks(env, sites).catch(() => null);   // peaks are best-effort; never block live data
         return Response.json({ at: new Date().toISOString(), sites, today }, { headers: cors });
       }
       if (url.pathname === '/alerts/check') return Response.json(await checkMppt(env, url.searchParams.has('force')), { headers: cors });
@@ -65,11 +65,15 @@ async function allMetrics(env, fresh) {
 // ---- Today's peaks (site PV, each MPPT string, and both sites combined), kept in KV per local day ----
 const TZ = 'America/New_York';                               // Watkinsville, GA — from the ecobee thermostats
 const localDay = () => new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+// KV free tier allows 1,000 writes/day, so: write only when a peak actually rises (and never more than once a
+// minute per key), and refresh the energy counters at most every 10 minutes. Everything else is read-only.
+let lastPeakWrite = 0;
 async function trackPeaks(env, sites) {
   const day = localDay(), key = `peaks:${day}`;
-  const st = (await env.STATE.get(key, 'json')) || { day, sites: {}, both: { w: 0, at: null } };
-  const now = new Date().toISOString();
+  const st = (await env.STATE.get(key, 'json')) || { day, sites: {}, both: { w: 0, at: null }, energyAt: 0 };
+  const now = new Date().toISOString(), ms = Date.now();
   let changed = false, totalPv = 0, allOk = true;
+  const energyDue = ms - (st.energyAt || 0) > 10 * 60e3;
   for (const s of sites) {
     if (s.error) { allOk = false; continue; }
     const m = Object.fromEntries(s.metrics.map((x) => [x.topic, x]));
@@ -78,15 +82,18 @@ async function trackPeaks(env, sites) {
     const pv = v('total/pv_power'); totalPv += pv;
     if (pv > rec.pv.w) { rec.pv = { w: pv, at: now }; changed = true; }
     for (const t of Object.keys(m).filter((t) => /^inverter_\d+\/pv_power_\d+$/.test(t)).sort()) {
-      const w = v(t), cur = rec.mppt[t] || { w: 0, at: null };
-      if (w > cur.w) { rec.mppt[t] = { w, at: now }; changed = true; }
-      else if (!rec.mppt[t]) { rec.mppt[t] = cur; changed = true; }
+      const w = v(t), cur = rec.mppt[t];
+      if (!cur || w > cur.w) { rec.mppt[t] = { w, at: now }; changed = true; }
     }
-    // Daily energy from Solar Assistant's own counter (resets at its midnight): keep the latest reading.
-    rec.pvEnergy = v('total/pv_energy'); rec.loadEnergy = v('total/load_energy'); changed = true;
+    // Daily energy from Solar Assistant's own counter (resets at its midnight); shown live, persisted every 10 min.
+    rec.pvEnergy = v('total/pv_energy'); rec.loadEnergy = v('total/load_energy');
   }
   if (allOk && totalPv > st.both.w) { st.both = { w: totalPv, at: now }; changed = true; }
-  if (changed) await env.STATE.put(key, JSON.stringify(st), { expirationTtl: 3 * 86400 });
+  if (energyDue) { st.energyAt = ms; changed = true; }
+  if (changed && ms - lastPeakWrite > 60e3) {
+    lastPeakWrite = ms;
+    await env.STATE.put(key, JSON.stringify(st), { expirationTtl: 3 * 86400 }).catch(() => {});
+  }
   return st;
 }
 
@@ -110,6 +117,7 @@ async function checkMppt(env, force = false) {
     const fault = strings.length > 1 && dead.length > 0 && live.length > 0;
     const key = `mppt:${s.id}`;
     const st = (await env.STATE.get(key, 'json')) || { count: 0, alertedAt: 0 };
+    const before = JSON.stringify(st);
     const label = s.description ? `${s.description} (${s.name})` : s.name;
     const detail = strings.map((x) => `MPPT ${x.n}: ${kW(x.w)} (${x.volts} V, ${x.amps} A)`).join('\n');
     let action = 'none';
@@ -125,7 +133,7 @@ async function checkMppt(env, force = false) {
       if (st.alertedAt) { await sendMail(env, `✅ ${label}: MPPT strings back to normal`, `${label}\n\n${detail}\n\nBoth strings are producing again.`); action = 'recovered'; }
       st.count = 0; st.alertedAt = 0;
     }
-    await env.STATE.put(key, JSON.stringify(st));
+    if (JSON.stringify(st) !== before) await env.STATE.put(key, JSON.stringify(st)).catch(() => {});   // only on change: KV write budget
     report.push({ site: label, fault, strings, count: st.count, action });
   }
   return { at: new Date().toISOString(), report };
