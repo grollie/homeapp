@@ -22,19 +22,18 @@ export default {
     if (!env.RELAY_KEY || url.searchParams.get('k') !== env.RELAY_KEY) return new Response('Unauthorized', { status: 401, headers: cors });
     try {
       if (url.pathname === '/devices') {
-        const list = await devicesList(env);
-        const devices = await Promise.all(list.map(async (d) => {
-          try {
-            const sh = await tuya(env, `/v2.0/cloud/thing/${d.id}/shadow/properties`);
-            const p = Object.fromEntries((sh.properties || []).map((x) => [x.code, x.value]));
-            // SmartLi "EOS" packs: voltages/currents ×100, temps ×10, capacities in 10 mAh, remain_time in minutes
-            const v = p.pack_voltage / 100, a = p.pack_current / 100;
-            return { id: d.id, name: d.name, online: d.online, soc: p.soc, soh: p.soh, volts: v, amps: a, watts: Math.round(v * a),
-              temp: p.cell_temp / 10, cycles: p.cycle_counts, remainMin: p.remain_time, capAh: p.full_cap / 100, remainAh: p.remain_cap / 100,
-              warning: p.warning_flag || 0, protection: p.protections_fag || 0 };
-          } catch (e) { return { id: d.id, name: d.name, online: false, error: e.message }; }
-        }));
-        return Response.json({ at: new Date().toISOString(), devices }, { headers: cors });
+        // Tuya's trial plan has a small monthly call quota and every page poll used to cost 1 + N calls.
+        // Serve a shared cached snapshot (Cloudflare edge cache, CACHE_SECONDS, default 600) and only go to Tuya
+        // when it's stale; on a Tuya error, fall back to the last good snapshot so the page keeps showing data.
+        const ttl = +(env.CACHE_SECONDS || 600);
+        const ck = new Request('https://tuya-relay.internal/devices-snapshot');
+        const hit = await caches.default.match(ck);
+        if (hit) { const j = await hit.json(); if (Date.now() - Date.parse(j.at) < ttl * 1000) return Response.json({ ...j, cached: true }, { headers: cors }); }
+        let fresh;
+        try { fresh = await snapshot(env); }
+        catch (e) { if (hit) { const j = await (await caches.default.match(ck)).json().catch(() => null); if (j) return Response.json({ ...j, cached: true, stale: true, error: e.message }, { headers: cors }); } throw e; }
+        await caches.default.put(ck, new Response(JSON.stringify(fresh), { headers: { 'Cache-Control': 'max-age=86400' } }));
+        return Response.json(fresh, { headers: cors });
       }
       if (url.pathname === '/raw') {                      // debugging: any GET path
         return Response.json(await tuya(env, url.searchParams.get('path') || '/v1.0/token?grant_type=1'), { headers: cors });
@@ -46,10 +45,29 @@ export default {
   },
 };
 
-// Device list with real names (the list endpoint only has product-ish names); cached 10 min.
+// One fresh reading of every linked device (1 list call, cached for hours, + 1 shadow call per device).
+async function snapshot(env) {
+  const list = await devicesList(env);
+  let quota = null;
+  const devices = await Promise.all(list.map(async (d) => {
+    try {
+      const sh = await tuya(env, `/v2.0/cloud/thing/${d.id}/shadow/properties`);
+      const p = Object.fromEntries((sh.properties || []).map((x) => [x.code, x.value]));
+      // SmartLi "EOS" packs: voltages/currents ×100, temps ×10, capacities in 10 mAh, remain_time in minutes
+      const v = p.pack_voltage / 100, a = p.pack_current / 100;
+      return { id: d.id, name: d.name, online: d.online, soc: p.soc, soh: p.soh, volts: v, amps: a, watts: Math.round(v * a),
+        temp: p.cell_temp / 10, cycles: p.cycle_counts, remainMin: p.remain_time, capAh: p.full_cap / 100, remainAh: p.remain_cap / 100,
+        warning: p.warning_flag || 0, protection: p.protections_fag || 0 };
+    } catch (e) { if (/quota/i.test(e.message)) quota = e; return { id: d.id, name: d.name, online: false, error: e.message }; }
+  }));
+  if (quota) throw quota;                                    // don't cache a snapshot of errors
+  return { at: new Date().toISOString(), devices };
+}
+
+// Device list with real names (the list endpoint only has product-ish names); cached 6 h — it rarely changes.
 let listCache = { at: 0, list: [] };
 async function devicesList(env) {
-  if (listCache.list.length && Date.now() - listCache.at < 6e5) return listCache.list;
+  if (listCache.list.length && Date.now() - listCache.at < 6 * 36e5) return listCache.list;
   const raw = (await tuya(env, '/v2.0/cloud/thing/device?page_size=20')) || [];
   const list = await Promise.all(raw.map(async (d) => {
     const det = await tuya(env, `/v1.0/iot-03/devices/${d.id}`).catch(() => ({}));
